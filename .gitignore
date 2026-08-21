@@ -6,6 +6,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# `pnpm pack` / `npm pack` output, produced by the CI tarball check
+*.tgz
+
 # Vite caches
 .vite/
 

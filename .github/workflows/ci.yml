@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # `pnpm test` builds first, so this also proves the published artifact
+      # compiles: the smoke test boots the real CLI over a real websocket against
+      # the stub agent.
+      - name: Test
+        run: pnpm test
+
+      # Catches the failure mode a green test run would still hide: a `files` or
+      # bin path that omits the UI bundle, so `npx` serves a 404.
+      - name: Check the package tarball contains the CLI and the UI
+        run: |
+          pnpm pack
+          TARBALL=$(ls ./*.tgz)
+          echo "packed $TARBALL"
+          tar -tzf "$TARBALL" | sort > /tmp/contents.txt
+          sed 's/^/  /' /tmp/contents.txt | head -40
+          for required in package/dist/server/cli.js package/dist/ui/index.html; do
+            grep -qx "$required" /tmp/contents.txt || {
+              echo "::error::$required missing from the published tarball"
+              exit 1
+            }
+          done
+          grep -q '^package/dist/ui/assets/' /tmp/contents.txt || {
+            echo "::error::no built UI assets in the published tarball"
+            exit 1
+          }

@@ -227,6 +227,28 @@ full prompt turn over the real control socket and asserts on what was captured.
 For UI work, run the CLI with `--dev` and `pnpm dev:ui` in parallel, then open
 `http://127.0.0.1:6275/?token=<token from the CLI>` for HMR.
 
+## Releasing
+
+`.github/workflows/ci.yml` runs typecheck, both test suites, and a check that the
+packed tarball actually contains `dist/server/cli.js` plus the built UI. That last
+one exists because a green test run would still hide a `files` or path mistake that
+ships a CLI with no UI, which fails only when a user runs `npx`.
+
+Publishing is driven by a GitHub release:
+
+1. Push to `main` and let CI pass.
+2. Create a release tagged `vX.Y.Z`.
+3. `.github/workflows/publish.yml` derives the version from the tag
+   (`npm version ${GITHUB_REF_NAME#v} --no-git-tag-version`), rebuilds, retests,
+   and publishes.
+
+It needs an `NPM_TOKEN` repository secret with publish rights.
+
+npm **provenance** is intentionally not enabled: it requires the source repository
+to be public. The workflow already grants `id-token: write`, so turning it on once
+this repo is public means adding `--provenance` to the publish step and nothing
+else.
+
 ## Status
 
 Working vertical slice, exercised against the stub agent and two real ACP agents:

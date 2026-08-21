@@ -1,0 +1,55 @@
+name: Publish to NPM
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  # Required for npm provenance. Harmless while provenance is off; keeping it
+  # here means enabling provenance later is a one-line change.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Builds the server and the UI, then runs the transcript unit tests and the
+      # end-to-end smoke test against the stub agent. The UI bundle must be in
+      # dist/ui or the published CLI serves a 404, so a failing build here is the
+      # gate that matters.
+      - name: Test
+        run: pnpm test
+
+      - name: Set version from release tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm version "$VERSION" --no-git-tag-version
+
+      # --provenance is deliberately absent: npm requires the source repository
+      # to be public, and this one is private. Add it back (and nothing else)
+      # once the repo is public.
+      - name: Publish to NPM
+        run: pnpm publish --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

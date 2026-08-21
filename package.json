@@ -7,13 +7,24 @@
     "agent-client-protocol",
     "jsonrpc",
     "inspector",
-    "debugger"
+    "debugger",
+    "agent",
+    "ai",
+    "llm"
   ],
   "license": "MIT",
   "author": "Ryan Cormack",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ryancormack/acp-inspector.git"
+  },
+  "homepage": "https://github.com/ryancormack/acp-inspector#readme",
+  "bugs": {
+    "url": "https://github.com/ryancormack/acp-inspector/issues"
+  },
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "bin": {
     "acp-debugger": "dist/server/cli.js"
@@ -21,6 +32,9 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "npm run build:server && npm run build:ui",
     "build:server": "tsc -p tsconfig.server.json",
@@ -28,7 +42,8 @@
     "dev:ui": "vite",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.ui.json --noEmit",
     "start": "node dist/server/cli.js",
-    "test": "npm run build && node --test test/transcript.test.mjs && node test/smoke.mjs"
+    "test": "npm run build && node --test test/transcript.test.mjs && node test/smoke.mjs",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
