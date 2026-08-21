@@ -1,0 +1,452 @@
+:root {
+  --bg: #14161a;
+  --panel: #1b1e24;
+  --panel-2: #22262e;
+  --line: #2f353f;
+  --text: #dfe3ea;
+  --muted: #8b93a1;
+  --out: #7cc4ff;
+  --in: #8fd98f;
+  --stderr: #d8a657;
+  --bad: #ff7b72;
+  --accent: #4f8cff;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 13px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+code,
+pre,
+.mono,
+.command,
+.seq,
+.time,
+.ms {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app.loading {
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+/* -------------------------------------------------------------------- toolbar */
+
+.toolbar {
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.toolbar-row.summary {
+  color: var(--muted);
+  gap: 14px;
+  font-size: 12px;
+}
+
+.command {
+  flex: 1 1 240px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.caps-label {
+  color: var(--muted);
+  margin-left: 6px;
+}
+
+.pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 11px;
+  text-transform: lowercase;
+}
+
+.pill-open,
+.pill-running {
+  border-color: #2f6b3a;
+  color: var(--in);
+}
+
+.pill-connecting {
+  border-color: #6b5a2f;
+  color: var(--stderr);
+}
+
+.pill-closed,
+.pill-stopped {
+  border-color: #6b3232;
+  color: var(--bad);
+}
+
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Muted spans inside a filled button need to lift off the accent, not sink into it. */
+button.primary .muted {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+button.danger {
+  border-color: #6b3232;
+  color: var(--bad);
+}
+
+button.active {
+  border-color: var(--accent);
+}
+
+input,
+select,
+textarea {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 3px 6px;
+  font: inherit;
+}
+
+input[type='number'] {
+  width: 64px;
+}
+
+label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.warn {
+  color: var(--stderr);
+}
+
+/* -------------------------------------------------------------------- notices */
+
+.notices {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: #2a1f1f;
+}
+
+.notice-error {
+  color: var(--bad);
+}
+
+/* -------------------------------------------------------------------- pending */
+
+.pending {
+  /* Must not be shrunk by the flex column: this panel holds the buttons that
+     unblock a stalled agent, and flexbox will happily squash it to a sliver
+     behind a long timeline. It scrolls internally instead. */
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line);
+  background: #232a1e;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 32vh;
+  overflow: auto;
+}
+
+.pending-item header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+/* Several requests can be open at once, and the panel scrolls. Separating the
+   items keeps a half-scrolled one reading as "more below" rather than broken. */
+.pending-item + .pending-item {
+  border-top: 1px solid #3a4430;
+  padding-top: 8px;
+}
+
+.answers {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.tool-title {
+  margin: 0 8px 0 0;
+  flex: 1 1 100%;
+}
+
+/* ---------------------------------------------------------------------- panes */
+
+.panes {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(340px, 1.4fr) minmax(320px, 1fr);
+  min-height: 0;
+}
+
+.timeline,
+.detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.detail {
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.filters {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.search {
+  flex: 1 1 160px;
+  min-width: 120px;
+}
+
+.count {
+  font-size: 11px;
+}
+
+.rows {
+  flex: 1 1 auto;
+  overflow: auto;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 52px 92px 16px 82px 1fr auto auto;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid #1f232a;
+  border-radius: 0;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.row:hover {
+  background: #1d2027;
+}
+
+.row.selected {
+  background: #232a36;
+}
+
+.row .seq,
+.row .time {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.row .kind {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.row .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row.dir-out .arrow,
+.row.dir-out .label {
+  color: var(--out);
+}
+
+.row.dir-in .arrow,
+.row.dir-in .label {
+  color: var(--in);
+}
+
+.row.dir-stderr .arrow,
+.row.dir-stderr .label {
+  color: var(--stderr);
+}
+
+.row.dir-meta .label {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.row.has-violation,
+.row.kind-malformed {
+  background: #2a1d1d;
+}
+
+.row .flag {
+  color: var(--bad);
+  font-weight: 700;
+}
+
+.row .ms {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* --------------------------------------------------------------------- detail */
+
+.detail-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.detail-head .spacer {
+  flex: 1 1 auto;
+}
+
+.payload {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.payload.small {
+  font-size: 11px;
+  max-height: 180px;
+  background: var(--bg);
+  border-radius: 5px;
+}
+
+.violations {
+  margin: 0;
+  padding: 8px 10px 8px 26px;
+  background: #2a1d1d;
+  color: var(--bad);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.empty {
+  padding: 20px;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------- composer */
+
+.composer {
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.composer-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.method-override {
+  flex: 1 1 200px;
+  min-width: 140px;
+}
+
+.params {
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}

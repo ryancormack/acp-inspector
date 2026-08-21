@@ -1,0 +1,49 @@
+{
+  "name": "@ryancormack/acp-debugger",
+  "version": "0.0.1",
+  "description": "Browser-based inspector for the Agent Client Protocol. Launches an ACP agent over stdio and shows every JSON-RPC message in both directions.",
+  "keywords": [
+    "acp",
+    "agent-client-protocol",
+    "jsonrpc",
+    "inspector",
+    "debugger"
+  ],
+  "license": "MIT",
+  "author": "Ryan Cormack",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "acp-debugger": "dist/server/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "npm run build:server && npm run build:ui",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:ui": "vite build",
+    "dev:ui": "vite",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.ui.json --noEmit",
+    "start": "node dist/server/cli.js",
+    "test": "npm run build && node test/smoke.mjs"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.4.0",
+    "ajv": "8.20.0",
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@types/ws": "8.18.1",
+    "@vitejs/plugin-react": "6.1.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "typescript": "5.9.3",
+    "vite": "8.2.2"
+  }
+}
