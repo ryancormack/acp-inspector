@@ -1,5 +1,13 @@
 name: CI
 
+# `pull_request`, NOT `pull_request_target`. This matters: `pull_request` runs a
+# fork's code with a read-only token and no access to repository secrets, so a
+# malicious PR can waste runner minutes and nothing else. `pull_request_target`
+# would run that same untrusted code with write permissions and secrets in scope,
+# which is the standard way public repos get their tokens stolen.
+#
+# This workflow uses no secrets at all, which is what makes it safe to run on
+# arbitrary PRs.
 on:
   push:
     branches: [main]
@@ -8,25 +16,31 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@a15d269cd4658e1107c09f1fabf4cbd7bd1f308a # v4.4.0
         with:
           version: latest
 
+      # --frozen-lockfile: a PR cannot silently resolve dependency versions that
+      # differ from the reviewed lockfile.
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
         run: pnpm typecheck

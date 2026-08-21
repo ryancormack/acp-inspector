@@ -249,6 +249,42 @@ to be public. The workflow already grants `id-token: write`, so turning it on on
 this repo is public means adding `--provenance` to the publish step and nothing
 else.
 
+### Who can trigger what
+
+The two workflows are separated by trust rather than by convention:
+
+- **`ci.yml` uses `pull_request`, never `pull_request_target`, and reads no
+  secrets.** A fork's PR therefore runs with a read-only token and cannot reach
+  anything: the worst it can do is waste runner minutes. `pull_request_target`
+  would run that same untrusted code with write permissions and secrets in scope,
+  which is how public repositories get their tokens stolen.
+- **`publish.yml` only fires on a published release**, and creating a release
+  requires write access, so an outside contributor cannot trigger it at all.
+
+Beyond that:
+
+- Both workflows pin every action to an immutable **commit SHA**. A tag like `v4`
+  is mutable, so if it is repointed or the action's repository is compromised, the
+  new code runs in the one job that can see `NPM_TOKEN`.
+- `NODE_AUTH_TOKEN` is set **on the publish step only**, so it is absent while
+  dependency install and build scripts run.
+- Both installs use `--frozen-lockfile`, so nothing can silently resolve
+  dependency versions that were never reviewed.
+- The publish job targets a GitHub **environment** called `npm-publish`.
+
+Two things must be configured by hand, because a workflow file cannot grant them
+to itself:
+
+1. **Create the `npm-publish` environment** with required reviewers, and attach
+   `NPM_TOKEN` to that environment rather than to the repository. Until it exists
+   the publish job waits for approval, so a missing configuration fails closed.
+2. If this repository is made public, set Actions → *Fork pull request workflows*
+   to **require approval for all outside collaborators**.
+
+Worth considering instead of a long-lived token: npm **trusted publishing**, which
+uses the OIDC token this workflow already requests and removes `NPM_TOKEN`
+entirely. That deletes the credential rather than protecting it.
+
 ## Status
 
 Working vertical slice, exercised against the stub agent and two real ACP agents:

@@ -1,35 +1,55 @@
 name: Publish to NPM
 
+# A release can only be created by someone with write access, so this cannot be
+# triggered by an outside contributor. The `environment` below adds a second gate
+# so that even a write-access account cannot publish without an approval.
 on:
   release:
     types: [published]
 
 permissions:
   contents: read
-  # Required for npm provenance. Harmless while provenance is off; keeping it
-  # here means enabling provenance later is a one-line change.
+  # Required for npm provenance and for trusted publishing (OIDC). Granting it
+  # alone confers nothing.
   id-token: write
+
+# Never let two releases publish concurrently and land out of order.
+concurrency:
+  group: publish
+  cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Create this environment in repo settings with required reviewers, and scope
+    # NPM_TOKEN to it rather than to the repository. Without the environment the
+    # job simply waits, so a misconfiguration fails closed.
+    environment: npm-publish
     steps:
+      # Third-party and first-party actions are pinned to immutable SHAs. A tag
+      # like `v4` is mutable: if it is repointed, or the action's repo is
+      # compromised, the new code runs in the one job that can see NPM_TOKEN.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@a15d269cd4658e1107c09f1fabf4cbd7bd1f308a # v4.4.0
         with:
           version: latest
 
+      # --frozen-lockfile so a release can only ship the dependency versions that
+      # were reviewed into the lockfile.
+      #
+      # NODE_AUTH_TOKEN is deliberately NOT set on this step: dependency install
+      # scripts run here, and they have no business seeing the publish token.
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
         run: pnpm typecheck
@@ -49,6 +69,9 @@ jobs:
       # --provenance is deliberately absent: npm requires the source repository
       # to be public, and this one is private. Add it back (and nothing else)
       # once the repo is public.
+      #
+      # The token is scoped to this single step, so it is never in the
+      # environment while third-party install or build scripts are running.
       - name: Publish to NPM
         run: pnpm publish --no-git-checks
         env:
