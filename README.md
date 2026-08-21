@@ -50,6 +50,36 @@ never otherwise take. Calling a method whose capability you did not advertise ge
 `-32601` rather than being quietly serviced, because that is the agent's bug and
 hiding it defeats the tool.
 
+## Reading what the agent actually said
+
+A real agent streams token by token, so one prompt turn can produce hundreds of
+`session/update` notifications. Individually they are noise: the message the agent
+produced only exists as the concatenation of their content chunks.
+
+The **updates** control in the filter bar has three settings:
+
+| Setting | What you get |
+| --- | --- |
+| `collapsed` (default) | one row per message, tool call, or plan, with the chunks joined into readable text |
+| `raw frames` | every `session/update` frame individually, as it crossed stdio |
+| `hidden` | no `session/update` rows at all |
+
+Collapsed grouping follows the protocol rather than guessing. Chunks are keyed by
+`messageId`, which ACP defines as the marker for chunks belonging to the same
+message, so a message stays one row even when a tool call is interleaved with it.
+Where an agent sends no `messageId`, consecutive chunks of the same role are
+merged and any non-`session/update` frame closes the run. A `tool_call` and all
+its `tool_call_update`s become one row carrying the latest status. `plan`,
+`usage_update` and the other snapshot kinds collapse to their newest value.
+
+Nothing is lost: the row shows how many frames it folded, and the detail pane
+lists every one of them as a link that jumps to the raw frame. Non-text content
+blocks cannot be concatenated into prose, so they are listed as attachments
+rather than silently dropped.
+
+`src/shared/transcript.ts` is pure and has no DOM dependency, so the grouping
+rules are unit tested directly (`test/transcript.test.mjs`).
+
 ## What it catches
 
 - **Non-JSON on stdout.** ACP says the agent MUST NOT write anything to stdout
@@ -142,7 +172,8 @@ pnpm test           # builds, then runs the end-to-end smoke test
 pnpm typecheck
 ```
 
-`pnpm test` boots the real CLI against `test/fixtures/stub-agent.mjs`, a
+`pnpm test` runs the transcript unit tests, then boots the real CLI against
+`test/fixtures/stub-agent.mjs`, a
 deliberately imperfect agent that streams updates, calls back into the client,
 gates a tool call behind a permission request, calls `terminal/create` without the
 capability, writes a stray line to stdout, and logs to stderr. The test drives a
@@ -163,10 +194,6 @@ authentication flows. Verified on macOS with Node 26 against one real agent.
 
 Not yet built:
 
-- **A collapsed transcript view.** A real agent streams token by token, so one
-  prompt can produce a thousand `session/update` frames. The `hide session/update`
-  filter keeps the log navigable, but nothing yet reassembles those chunks into the
-  message the agent actually produced. This is the most useful next piece of work.
 - `terminal/*` execution (currently advertised-but-unimplemented returns `-32603`)
 - Tap mode: sit between a real editor and the agent to capture what Zed actually
   sends, logging over a side channel since stdout is reserved for ACP

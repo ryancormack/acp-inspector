@@ -2,7 +2,9 @@ import { useCallback, useMemo, useState } from 'react';
 import { Composer } from './components/Composer';
 import { Detail } from './components/Detail';
 import { PendingPanel } from './components/PendingPanel';
-import { DEFAULT_FILTERS, Timeline, type Filters } from './components/Timeline';
+import { Timeline } from './components/Timeline';
+import { buildRows, DEFAULT_FILTERS, type Filters } from './rows';
+import { frameRowId } from '../shared/transcript';
 import { Toolbar } from './components/Toolbar';
 import { clientCapabilities } from './templates';
 import { useInspector } from './useInspector';
@@ -10,13 +12,26 @@ import { useInspector } from './useInspector';
 export function App() {
   const { connection, state, entries, notices, send, dismissNotice } = useInspector();
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
-  const [selectedSeq, setSelectedSeq] = useState<number | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [follow, setFollow] = useState(true);
 
+  const rows = useMemo(() => buildRows(entries, filters), [entries, filters]);
   const selected = useMemo(
-    () => entries.find((entry) => entry.seq === selectedSeq) ?? null,
-    [entries, selectedSeq],
+    () => rows.find((row) => row.id === selectedId) ?? null,
+    [rows, selectedId],
   );
+
+  /**
+   * Selecting a frame from inside a collapsed group only resolves if that frame
+   * is a row in its own right, so switching to the raw view is part of the jump.
+   */
+  const selectFrame = useCallback((seq: number) => {
+    setFilters((previous) =>
+      previous.updates === 'collapsed' ? { ...previous, updates: 'raw' } : previous,
+    );
+    setFollow(false);
+    setSelectedId(frameRowId(seq));
+  }, []);
 
   /**
    * The two calls every session starts with. Sent back to back: `session/new`
@@ -87,15 +102,16 @@ export function App() {
 
       <main className="panes">
         <Timeline
-          entries={entries}
+          rows={rows}
+          totalFrames={entries.length}
           filters={filters}
           onFiltersChange={setFilters}
-          selectedSeq={selectedSeq}
-          onSelect={setSelectedSeq}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
           follow={follow}
           onFollowChange={setFollow}
         />
-        <Detail entry={selected} />
+        <Detail row={selected} onSelectFrame={selectFrame} />
       </main>
 
       <Composer state={state} send={send} />

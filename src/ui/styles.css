@@ -294,7 +294,7 @@ label.inline {
 
 .row {
   display: grid;
-  grid-template-columns: 52px 92px 16px 82px 1fr auto auto;
+  grid-template-columns: 52px 92px 16px 108px 1fr auto auto;
   gap: 8px;
   align-items: baseline;
   width: 100%;
@@ -325,6 +325,9 @@ label.inline {
 .row .kind {
   color: var(--muted);
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .row .label {
@@ -366,6 +369,88 @@ label.inline {
 .row .ms {
   color: var(--muted);
   font-size: 11px;
+}
+
+/* ------------------------------------------------------- collapsed group rows */
+
+.row-group {
+  background: #191d24;
+}
+
+.row-group .kind {
+  color: var(--text);
+}
+
+.row-group.role-agent .label {
+  color: var(--in);
+}
+
+.row-group.role-agent_thought .label,
+.row-group.role-plan .label,
+.row-group.role-usage .label {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.row-group.role-user .label {
+  color: var(--out);
+}
+
+.row-group.role-tool .label {
+  color: #d3b0ff;
+}
+
+.row-group .arrow {
+  color: var(--muted);
+}
+
+.badge {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Reassembled agent output, read as prose rather than inspected as JSON. */
+.transcript {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 12px 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  font-size: 13px;
+}
+
+.attachments {
+  margin: 0;
+  padding: 6px 10px 6px 26px;
+  border-bottom: 1px solid var(--line);
+  color: var(--stderr);
+  font-size: 12px;
+}
+
+.frame-list {
+  border-top: 1px solid var(--line);
+  padding: 6px 10px;
+  max-height: 22vh;
+  overflow: auto;
+}
+
+.frame-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 6px;
+}
+
+.seq-link {
+  padding: 1px 5px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 /* --------------------------------------------------------------------- detail */

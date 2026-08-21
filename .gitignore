@@ -1,4 +1,26 @@
+# Dependencies
 node_modules/
+
+# Build output: `dist/server` (tsc) and `dist/ui` (vite). Published to npm via
+# the package's `files` field, never committed.
 dist/
 *.tsbuildinfo
+
+# Vite caches
+.vite/
+
+# Credentials. This tool passes an agent's environment through `--env`, so a
+# developer may well keep a scratch env file beside the checkout. Never commit one.
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editors and OS
+.vscode/
+.idea/
 .DS_Store
