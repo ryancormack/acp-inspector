@@ -16,6 +16,8 @@ import { createInterface } from 'node:readline';
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const pending = new Map();
 let nextId = 1000;
+/** Sessions the client has asked us to cancel. */
+const cancelled = new Set();
 
 const waitFor = (id) => new Promise((resolve) => pending.set(id, resolve));
 
@@ -67,8 +69,14 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
       send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'sess-stub-1' } });
       return;
 
+    case 'session/cancel':
+      cancelled.add(message.params.sessionId);
+      process.stderr.write(`stub-agent: cancel requested for ${message.params.sessionId}\n`);
+      return;
+
     case 'session/prompt': {
       const { sessionId } = message.params;
+      cancelled.delete(sessionId);
 
       send({
         jsonrpc: '2.0',
@@ -93,6 +101,25 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
       });
       process.stderr.write(`stub-agent: read returned ${'result' in read ? 'ok' : 'error'}\n`);
 
+      // A tool call announced, then updated with the payloads a debugger wants:
+      // the arguments passed, the diff proposed, and the result.
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'tc-1',
+            title: 'Write src/generated.ts',
+            kind: 'edit',
+            status: 'pending',
+            rawInput: { path: 'src/generated.ts', mode: 'overwrite' },
+            locations: [{ path: 'src/generated.ts', line: 1 }],
+          },
+        },
+      });
+
       const permission = await call('session/request_permission', {
         sessionId,
         toolCall: {
@@ -105,6 +132,48 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
           { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
           { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' },
         ],
+      });
+
+      const outcome = permission.result?.outcome?.outcome;
+      if (cancelled.has(sessionId) || outcome === 'cancelled') {
+        // ACP requires the cancelled stop reason once the turn was cancelled.
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId,
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'tc-1',
+              status: 'failed',
+            },
+          },
+        });
+        send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'cancelled' } });
+        return;
+      }
+
+      send({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId,
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'tc-1',
+            status: 'completed',
+            rawOutput: { bytesWritten: 42 },
+            content: [
+              { type: 'content', content: { type: 'text', text: 'wrote src/generated.ts' } },
+              {
+                type: 'diff',
+                path: 'src/generated.ts',
+                oldText: null,
+                newText: 'export const generated = true;\n',
+              },
+            ],
+          },
+        },
       });
 
       const terminal = await call('terminal/create', {

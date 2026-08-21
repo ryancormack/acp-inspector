@@ -116,6 +116,8 @@ export interface InspectorState {
   /** Most recent session id returned by `session/new` or `session/load`. */
   sessionId: string | null;
   pending: PendingRequest[];
+  /** Number of `session/prompt` requests awaiting a response. */
+  activePrompts: number;
   /** Entries dropped from the head of the ring buffer. */
   dropped: number;
 }
@@ -140,6 +142,12 @@ export type ClientCommand =
       env?: Record<string, string>;
     }
   | { type: 'kill' }
+  /**
+   * Cancel the in-flight prompt turn: sends `session/cancel` and answers every
+   * outstanding permission request with the `cancelled` outcome, which ACP
+   * requires of the client.
+   */
+  | { type: 'cancelTurn' }
   /**
    * Send one message to the agent. When `assignId` is true the server stamps
    * the next outbound request id; otherwise the message goes out exactly as

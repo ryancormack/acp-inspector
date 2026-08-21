@@ -77,8 +77,30 @@ lists every one of them as a link that jumps to the raw frame. Non-text content
 blocks cannot be concatenated into prose, so they are listed as attachments
 rather than silently dropped.
 
+A tool call's row carries the parts worth debugging, gathered from across its
+updates: `rawInput` (the arguments the agent actually passed), `rawOutput`,
+`locations`, and its `content` blocks. A `diff` block shows both sides verbatim
+rather than being run through a diff algorithm, so nothing is inferred that the
+agent did not send. `tool_call_update` supplies whole fields rather than deltas,
+so the latest update carrying a field replaces it and an update that omits one
+leaves the earlier value intact.
+
 `src/shared/transcript.ts` is pure and has no DOM dependency, so the grouping
 rules are unit tested directly (`test/transcript.test.mjs`).
+
+## Cancelling a turn
+
+While a `session/prompt` is in flight the toolbar shows **Cancel turn**. ACP puts
+obligations on both sides of a cancellation, and the client's half is the one that
+is easy to miss: every outstanding `session/request_permission` MUST be answered
+with the `cancelled` outcome, or the agent sits waiting on a decision that will
+never arrive. So the button sends `session/cancel`, closes out the permission
+requests the inspector is holding, and then checks the agent's half by flagging it
+when the `session/prompt` response comes back with any `stopReason` other than
+`cancelled`.
+
+Known limitation: with more than one prompt in flight on the same session, the
+cancel targets the first one that has a usable session id rather than asking which.
 
 ## What it catches
 

@@ -453,6 +453,63 @@ label.inline {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* -------------------------------------------------------------- tool payloads */
+
+.tool-payload {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.tool-payload section {
+  padding-top: 10px;
+}
+
+.tool-payload h4 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.locations {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.tool-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-diff .diff-path {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--out);
+}
+
+/* Both sides shown verbatim, side by side where there is room. */
+.diff-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .diff-pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+.diff-pair .payload {
+  margin-top: 2px;
+  background: var(--bg);
+  border-radius: 4px;
+  max-height: 220px;
+}
+
 /* --------------------------------------------------------------------- detail */
 
 .detail-head {

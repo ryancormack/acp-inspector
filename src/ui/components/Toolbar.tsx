@@ -47,6 +47,16 @@ export function Toolbar({ state, connection, send, onConnectSequence }: ToolbarP
         <button type="button" onClick={onConnectSequence} disabled={!agent.running}>
           initialize + session/new
         </button>
+        {state.activePrompts > 0 && (
+          <button
+            type="button"
+            className="danger"
+            title="Send session/cancel and answer any pending permission request with the cancelled outcome"
+            onClick={() => send({ type: 'cancelTurn' })}
+          >
+            Cancel turn
+          </button>
+        )}
         <button type="button" onClick={() => send({ type: 'clear' })}>
           Clear log
         </button>

@@ -126,6 +126,9 @@ function applyCommand(command: ClientCommand, session: InspectorSession): void {
     case 'kill':
       session.kill();
       return;
+    case 'cancelTurn':
+      session.cancelTurn();
+      return;
     case 'send':
       session.send(command.message, command.assignId ?? false);
       return;

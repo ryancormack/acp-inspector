@@ -44,8 +44,39 @@ export interface TranscriptGroup {
   toolCallId?: string;
   toolStatus?: string;
   toolKind?: string;
+  /**
+   * A tool call's payloads. `tool_call_update` carries whole fields rather than
+   * deltas, so each of these is replaced by the latest update that supplies it.
+   * These are the fields worth debugging: the arguments the agent actually
+   * passed, what came back, and the diff it proposed.
+   */
+  toolContent?: ToolContentItem[];
+  rawInput?: unknown;
+  rawOutput?: unknown;
+  locations?: ToolLocation[];
   /** Non-text content encountered, e.g. `image/png`, for chunk groups. */
   attachments?: string[];
+}
+
+export interface ToolLocation {
+  path: string;
+  line?: number;
+}
+
+/** One entry of a tool call's `content` array, flattened for display. */
+export interface ToolContentItem {
+  /** The ACP discriminator: `content`, `diff`, `terminal`, or something unknown. */
+  type: string;
+  /** Text of a `content` block whose inner block is text. */
+  text?: string;
+  /** Description of a non-text `content` block, e.g. `image image/png`. */
+  attachment?: string;
+  /** `diff` fields. */
+  path?: string;
+  oldText?: string | null;
+  newText?: string;
+  /** `terminal` reference. */
+  terminalId?: string;
 }
 
 export type TimelineRow =
@@ -228,6 +259,24 @@ function absorb(group: TranscriptGroup, update: UpdatePayload): void {
       if (typeof kind === 'string') group.toolKind = kind;
       const toolCallId = update.raw.toolCallId;
       if (typeof toolCallId === 'string') group.toolCallId = toolCallId;
+
+      // A tool_call_update supplies whole fields, not deltas, so the latest
+      // update that carries a field replaces it rather than appending.
+      if ('rawInput' in update.raw) group.rawInput = update.raw.rawInput;
+      if ('rawOutput' in update.raw) group.rawOutput = update.raw.rawOutput;
+      if (Array.isArray(update.raw.content)) {
+        group.toolContent = update.raw.content.map(readToolContent);
+      }
+      if (Array.isArray(update.raw.locations)) {
+        group.locations = update.raw.locations.flatMap((item) => {
+          if (typeof item !== 'object' || item === null) return [];
+          const path = (item as { path?: unknown }).path;
+          if (typeof path !== 'string') return [];
+          const line = (item as { line?: unknown }).line;
+          return [typeof line === 'number' ? { path, line } : { path }];
+        });
+      }
+
       if (group.text === '') group.text = group.toolCallId ?? 'tool call';
       return;
     }
@@ -269,6 +318,43 @@ function summarisePlan(entries: unknown[]): string {
 function stripDiscriminator(raw: Record<string, unknown>): Record<string, unknown> {
   const { sessionUpdate: _ignored, ...rest } = raw;
   return rest;
+}
+
+/**
+ * Flattens one entry of a tool call's `content` array.
+ *
+ * ACP defines three variants: a wrapped ContentBlock, a file `diff`, and a
+ * `terminal` reference by id. Unknown variants are kept with their type so an
+ * extension shows up as something rather than vanishing.
+ */
+function readToolContent(item: unknown): ToolContentItem {
+  if (typeof item !== 'object' || item === null) return { type: 'unknown' };
+  const block = item as Record<string, unknown>;
+
+  switch (block.type) {
+    case 'content': {
+      const { text, attachment } = readContent(block.content);
+      return {
+        type: 'content',
+        ...(text === '' ? {} : { text }),
+        ...(attachment === null ? {} : { attachment }),
+      };
+    }
+    case 'diff':
+      return {
+        type: 'diff',
+        path: typeof block.path === 'string' ? block.path : '',
+        oldText: typeof block.oldText === 'string' ? block.oldText : null,
+        newText: typeof block.newText === 'string' ? block.newText : '',
+      };
+    case 'terminal':
+      return {
+        type: 'terminal',
+        terminalId: typeof block.terminalId === 'string' ? block.terminalId : '',
+      };
+    default:
+      return { type: block.type === undefined ? 'unknown' : String(block.type) };
+  }
 }
 
 /**

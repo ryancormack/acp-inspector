@@ -138,6 +138,31 @@ send({
 });
 await settle(400);
 
+/* ------------------------------------------------- cancellation scenario */
+
+// Second turn, this time cancelled at the permission gate instead of answered.
+const framesBeforeCancel = entries.length;
+answeredPermission = true; // stop the auto-answer above from racing the cancel
+send({
+  type: 'send',
+  assignId: true,
+  message: {
+    jsonrpc: '2.0',
+    method: 'session/prompt',
+    params: { sessionId: state?.sessionId, prompt: [{ type: 'text', text: 'cancel this' }] },
+  },
+});
+await settle(900);
+
+const promptsInFlight = state?.activePrompts ?? 0;
+const permissionOpen =
+  state?.pending?.some((p) => p.method === 'session/request_permission') ?? false;
+
+send({ type: 'cancelTurn' });
+await settle(1200);
+
+const cancelFrames = entries.slice(framesBeforeCancel);
+
 /* ----------------------------------------------------------------- assertions */
 
 const byMethod = (method, dir) =>
@@ -193,6 +218,50 @@ check('schema validation flagged the bad session/prompt', schemaFlagged.length =
   schemaFlagged[0]?.violations?.join('; ') ?? '');
 
 check('valid frames were not flagged', byMethod('initialize', 'out')[0]?.violations === undefined);
+
+/* ------------------------------------------------- tool call payloads */
+
+const toolUpdates = entries.filter(
+  (entry) => entry.dir === 'in' && entry.raw.includes('"toolCallId":"tc-1"'),
+);
+check('tool call and its update were captured', toolUpdates.length >= 2,
+  `${toolUpdates.length} frames`);
+check(
+  'tool call carried rawInput and locations',
+  toolUpdates.some((e) => e.raw.includes('rawInput') && e.raw.includes('locations')),
+);
+check(
+  'tool update carried a diff and rawOutput',
+  toolUpdates.some((e) => e.raw.includes('"type":"diff"') && e.raw.includes('rawOutput')),
+);
+
+/* ------------------------------------------------- cancellation */
+
+check('a prompt turn was tracked as in flight', promptsInFlight >= 1, `${promptsInFlight}`);
+check('the permission gate was open before cancelling', permissionOpen);
+
+check(
+  'session/cancel was sent',
+  cancelFrames.some((e) => e.dir === 'out' && e.method === 'session/cancel'),
+);
+check(
+  'the pending permission was answered with the cancelled outcome',
+  cancelFrames.some((e) => e.dir === 'out' && e.raw.includes('"outcome":"cancelled"')),
+);
+check(
+  'the inspector noted answering it, as cancellation requires',
+  cancelFrames.some((e) => e.kind === 'meta' && e.raw.includes('cancelled outcome')),
+);
+check(
+  'the agent settled the turn with stopReason cancelled',
+  cancelFrames.some((e) => e.dir === 'in' && e.raw.includes('"stopReason":"cancelled"')),
+);
+check(
+  'a correctly cancelled turn was not flagged as a violation',
+  !cancelFrames.some((e) => e.kind === 'meta' && e.raw.includes('ACP requires "cancelled"')),
+);
+check('no prompt left in flight after cancelling', (state?.activePrompts ?? -1) === 0,
+  `activePrompts=${String(state?.activePrompts)}`);
 
 socket.close();
 cli.kill('SIGTERM');

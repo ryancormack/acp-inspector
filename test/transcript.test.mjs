@@ -221,6 +221,95 @@ test('a malformed session/update is passed through untouched', () => {
   assert.equal(rows[0].type, 'frame');
 });
 
+test('a tool call carries its content, raw input/output and locations', () => {
+  seq = 0;
+  const rows = collapseUpdates([
+    upd({
+      sessionUpdate: 'tool_call',
+      toolCallId: 't1',
+      title: 'Edit config',
+      kind: 'edit',
+      status: 'pending',
+      rawInput: { path: '/tmp/a.json', value: 1 },
+      locations: [{ path: '/tmp/a.json', line: 12 }, { path: '/tmp/b.json' }],
+    }),
+    upd({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 't1',
+      status: 'completed',
+      rawOutput: { ok: true },
+      content: [
+        { type: 'content', content: { type: 'text', text: 'wrote 1 file' } },
+        { type: 'diff', path: '/tmp/a.json', oldText: '{}', newText: '{"value":1}' },
+        { type: 'terminal', terminalId: 'term-9' },
+      ],
+    }),
+  ]);
+
+  const [g] = groups(rows);
+  assert.equal(g.toolStatus, 'completed');
+  assert.deepEqual(g.rawInput, { path: '/tmp/a.json', value: 1 });
+  assert.deepEqual(g.rawOutput, { ok: true });
+  assert.deepEqual(g.locations, [{ path: '/tmp/a.json', line: 12 }, { path: '/tmp/b.json' }]);
+  assert.equal(g.toolContent.length, 3);
+  assert.deepEqual(g.toolContent[0], { type: 'content', text: 'wrote 1 file' });
+  assert.equal(g.toolContent[1].type, 'diff');
+  assert.equal(g.toolContent[1].newText, '{"value":1}');
+  assert.equal(g.toolContent[2].terminalId, 'term-9');
+});
+
+test('a later update replaces tool content rather than appending it', () => {
+  seq = 0;
+  const rows = collapseUpdates([
+    upd({
+      sessionUpdate: 'tool_call',
+      toolCallId: 't1',
+      title: 'Run',
+      content: [{ type: 'content', content: { type: 'text', text: 'first' } }],
+    }),
+    upd({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 't1',
+      content: [{ type: 'content', content: { type: 'text', text: 'second' } }],
+    }),
+  ]);
+
+  const [g] = groups(rows);
+  assert.equal(g.toolContent.length, 1);
+  assert.equal(g.toolContent[0].text, 'second');
+});
+
+test('an update that omits a field leaves the earlier value intact', () => {
+  seq = 0;
+  const rows = collapseUpdates([
+    upd({ sessionUpdate: 'tool_call', toolCallId: 't1', title: 'Run', rawInput: { a: 1 } }),
+    upd({ sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'completed' }),
+  ]);
+
+  const [g] = groups(rows);
+  assert.deepEqual(g.rawInput, { a: 1 });
+  assert.equal(g.toolStatus, 'completed');
+});
+
+test('a non-text tool content block is described rather than dropped', () => {
+  seq = 0;
+  const rows = collapseUpdates([
+    upd({
+      sessionUpdate: 'tool_call',
+      toolCallId: 't1',
+      title: 'Screenshot',
+      content: [
+        { type: 'content', content: { type: 'image', mimeType: 'image/png', data: 'AA' } },
+        { type: '_vendor' },
+      ],
+    }),
+  ]);
+
+  const [g] = groups(rows);
+  assert.deepEqual(g.toolContent[0], { type: 'content', attachment: 'image image/png' });
+  assert.equal(g.toolContent[1].type, '_vendor');
+});
+
 test('row order matches the incoming frame order', () => {
   seq = 0;
   const rows = collapseUpdates([

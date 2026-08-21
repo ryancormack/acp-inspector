@@ -62,6 +62,10 @@ export class InspectorSession {
   /** Request ids we are watching so we can learn state from their responses. */
   private readonly initializeIds = new Set<string>();
   private readonly newSessionIds = new Set<string>();
+  /** In-flight `session/prompt` requests, keyed by request id. */
+  private readonly promptIds = new Map<string, { sessionId: string | null; sentAt: number }>();
+  /** Prompt request ids we have asked the agent to cancel. */
+  private readonly cancelledPromptIds = new Set<string>();
 
   constructor(private readonly options: SessionOptions) {}
 
@@ -94,6 +98,7 @@ export class InspectorSession {
       negotiated: this.negotiated,
       sessionId: this.sessionId,
       pending: [...this.pending.values()],
+      activePrompts: this.promptIds.size,
       dropped: this.dropped,
     };
   }
@@ -173,6 +178,8 @@ export class InspectorSession {
     this.pending.clear();
     this.initializeIds.clear();
     this.newSessionIds.clear();
+    this.promptIds.clear();
+    this.cancelledPromptIds.clear();
     this.negotiated = null;
     this.sessionId = null;
     this.lastExit = undefined;
@@ -242,6 +249,11 @@ export class InspectorSession {
       this.outstandingOutbound.set(key, { method, sentAt: Date.now() });
       if (method === 'initialize') this.initializeIds.add(key);
       if (method === 'session/new' || method === 'session/load') this.newSessionIds.add(key);
+      if (method === 'session/prompt') {
+        const params = (outbound as { params?: { sessionId?: unknown } }).params;
+        const sessionId = typeof params?.sessionId === 'string' ? params.sessionId : null;
+        this.promptIds.set(key, { sessionId, sentAt: Date.now() });
+      }
     }
 
     this.agent.write(raw);
@@ -254,6 +266,47 @@ export class InspectorSession {
       id: 'id' in outbound ? outbound.id : undefined,
       violations: orUndefined(problemsFor(outbound, 'out', kind)),
     });
+  }
+
+  /**
+   * Cancels the in-flight prompt turn.
+   *
+   * ACP puts obligations on BOTH sides here, and the client's half is the part
+   * that is easy to get wrong: every outstanding `session/request_permission`
+   * MUST be answered with the `cancelled` outcome, or the agent is left waiting
+   * on a decision that will never come. So this sends `session/cancel`, then
+   * closes out the permission requests we are holding, then watches whether the
+   * agent honours its own half by answering `session/prompt` with a
+   * `cancelled` stop reason.
+   */
+  cancelTurn(): void {
+    if (!this.agent?.running) throw new Error('no agent is running');
+    if (this.promptIds.size === 0) throw new Error('no prompt turn is in flight');
+
+    const sessionId =
+      [...this.promptIds.values()].find((p) => p.sessionId !== null)?.sessionId ??
+      this.sessionId;
+    if (sessionId === null) {
+      throw new Error('cannot cancel: no session id is known for the in-flight prompt');
+    }
+
+    for (const key of this.promptIds.keys()) this.cancelledPromptIds.add(key);
+
+    this.send({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId } });
+
+    const outstanding = [...this.pending.values()].filter(
+      (request) => request.method === 'session/request_permission',
+    );
+    for (const request of outstanding) {
+      this.pending.delete(idKey(request.id));
+      this.sendResponse(request.id, { outcome: { outcome: 'cancelled' } }, undefined);
+    }
+    if (outstanding.length > 0) {
+      this.note(
+        `answered ${outstanding.length} pending permission request(s) with the cancelled outcome, as cancellation requires`,
+      );
+    }
+    this.pushState();
   }
 
   /** Answers an agent-initiated request that was deferred to the human. */
@@ -374,8 +427,25 @@ export class InspectorSession {
 
   /** Learns negotiated state from responses to requests we care about. */
   private absorbResponse(key: string, message: JsonRpcMessage): void {
+    const promptWasCancelled = this.cancelledPromptIds.delete(key);
+    const wasPrompt = this.promptIds.delete(key);
+    if (wasPrompt) this.pushState();
+
     if (!('result' in message) || message.result === undefined) return;
     const result = message.result as Record<string, unknown>;
+
+    if (wasPrompt && promptWasCancelled) {
+      // The spec is specific: after session/cancel the agent must settle the
+      // original prompt with the cancelled stop reason.
+      const stopReason = result.stopReason;
+      if (stopReason !== 'cancelled') {
+        this.note(
+          `agent answered a cancelled prompt turn with stopReason ${JSON.stringify(
+            stopReason,
+          )}; ACP requires "cancelled"`,
+        );
+      }
+    }
 
     if (this.initializeIds.delete(key)) {
       this.negotiated = {
@@ -444,6 +514,8 @@ export class InspectorSession {
   }
 
   private failAllOutstanding(reason: string): void {
+    this.promptIds.clear();
+    this.cancelledPromptIds.clear();
     if (this.outstandingOutbound.size > 0) {
       const ids = [...this.outstandingOutbound.keys()].join(', ');
       this.note(`${this.outstandingOutbound.size} request(s) never answered (${reason}): ${ids}`);
