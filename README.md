@@ -242,12 +242,27 @@ Publishing is driven by a GitHub release:
    (`npm version ${GITHUB_REF_NAME#v} --no-git-tag-version`), rebuilds, retests,
    and publishes.
 
-It needs an `NPM_TOKEN` repository secret with publish rights.
+It needs an `NPM_TOKEN` repository secret with publish rights for the **first**
+release only.
 
-npm **provenance** is intentionally not enabled: it requires the source repository
-to be public. The workflow already grants `id-token: write`, so turning it on once
-this repo is public means adding `--provenance` to the publish step and nothing
-else.
+### Token first, then trusted publishing
+
+A trusted publisher is configured on a package's own npm settings page, so it
+cannot be set up before the package exists. The first release therefore
+authenticates with a token; every release after that can drop it:
+
+1. Add an `NPM_TOKEN` secret with publish rights.
+2. Release `v0.0.1`. The workflow publishes with the token.
+3. On npmjs.com, open the package → Settings → Publishing access and add a
+   **trusted publisher**: GitHub Actions, this repository, workflow
+   `publish.yml`. While there, select *Require two-factor authentication and
+   disallow bypass 2fa tokens* — npm confirms this stays compatible with trusted
+   publishers, and it closes the token path off entirely.
+4. Delete the `env: NODE_AUTH_TOKEN` block from `publish.yml` and delete the
+   `NPM_TOKEN` secret. Publishing now needs no long-lived credential.
+5. If the repository is public, add `--provenance` to the publish step so releases
+   carry a signed SLSA attestation. Provenance requires a public repository; the
+   workflow already grants the `id-token: write` it needs.
 
 ### Who can trigger what
 
@@ -270,20 +285,18 @@ Beyond that:
   dependency install and build scripts run.
 - Both installs use `--frozen-lockfile`, so nothing can silently resolve
   dependency versions that were never reviewed.
-- The publish job targets a GitHub **environment** called `npm-publish`.
 
-Two things must be configured by hand, because a workflow file cannot grant them
-to itself:
+There is deliberately **no environment approval gate**. Creating a release already
+requires write access, so for a single maintainer an approval step adds a click
+without adding a boundary; the controls that carry weight are on npm (a trusted
+publisher plus *disallow bypass 2fa tokens*). To add one anyway, create an
+`npm-publish` environment with required reviewers, scope `NPM_TOKEN` to it, and add
+`environment: npm-publish` to the publish job.
 
-1. **Create the `npm-publish` environment** with required reviewers, and attach
-   `NPM_TOKEN` to that environment rather than to the repository. Until it exists
-   the publish job waits for approval, so a missing configuration fails closed.
-2. If this repository is made public, set Actions → *Fork pull request workflows*
-   to **require approval for all outside collaborators**.
-
-Worth considering instead of a long-lived token: npm **trusted publishing**, which
-uses the OIDC token this workflow already requests and removes `NPM_TOKEN`
-entirely. That deletes the credential rather than protecting it.
+One thing must be configured by hand, because a workflow cannot grant it to
+itself: if this repository is made public, set Actions → *Fork pull request
+workflows* to **require approval for all outside collaborators**. The default only
+gates first-time contributors.
 
 ## Status
 
