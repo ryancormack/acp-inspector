@@ -93,6 +93,20 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
       // Forbidden: stdout must carry ACP messages only.
       process.stdout.write('stub-agent: oops, a stray console.log\n');
 
+      // Legal but non-standard: ACP reserves a leading `_` for vendor
+      // extensions. Kiro CLI streams these constantly, so the inspector must
+      // record that they exist without treating each one as a problem.
+      send({
+        jsonrpc: '2.0',
+        method: '_stub.dev/metadata',
+        params: { note: 'vendor extension notification' },
+      });
+      send({
+        jsonrpc: '2.0',
+        method: '_stub.dev/metadata',
+        params: { note: 'sent twice, should be counted not re-announced' },
+      });
+
       const read = await call('fs/read_text_file', {
         sessionId,
         path: `${process.cwd()}/package.json`,

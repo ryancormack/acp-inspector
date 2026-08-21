@@ -219,6 +219,28 @@ check('schema validation flagged the bad session/prompt', schemaFlagged.length =
 
 check('valid frames were not flagged', byMethod('initialize', 'out')[0]?.violations === undefined);
 
+/* ------------------------------------------------- vendor extensions */
+
+const extFrames = entries.filter((entry) => entry.extension === true);
+check('vendor extension frames are flagged as extensions', extFrames.length >= 2,
+  `${extFrames.length} frames`);
+check(
+  'the extension method is recorded in state',
+  state?.extensions?.some((ext) => ext.method === '_stub.dev/metadata') === true,
+);
+const extRecord = state?.extensions?.find((ext) => ext.method === '_stub.dev/metadata');
+check('repeat use is counted, not re-announced', (extRecord?.count ?? 0) >= 2,
+  `count=${String(extRecord?.count)}`);
+check('it is recorded as a notification', extRecord?.kind === 'notification');
+const extNotes = entries.filter(
+  (entry) => entry.kind === 'meta' && entry.raw.includes('vendor extension'),
+);
+check('announced exactly once per method', extNotes.length === 1, `${extNotes.length} notes`);
+check(
+  'no complaint per extension frame',
+  !entries.some((entry) => entry.raw.includes('ignoring unhandled notification _stub.dev')),
+);
+
 /* ------------------------------------------------- tool call payloads */
 
 const toolUpdates = entries.filter(

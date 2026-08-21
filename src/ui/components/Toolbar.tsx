@@ -101,6 +101,17 @@ export function Toolbar({ state, connection, send, onConnectSequence }: ToolbarP
         {state.dropped > 0 && (
           <span className="warn">{state.dropped} older frame(s) dropped from the buffer</span>
         )}
+        {state.extensions.length > 0 && (
+          <span
+            className="warn"
+            title={state.extensions
+              .map((ext) => `${ext.method} (${ext.kind}, ${ext.count}x)`)
+              .join('\n')}
+          >
+            {state.extensions.length} vendor extension method(s):{' '}
+            {state.extensions.map((ext) => ext.method).join(', ')}
+          </span>
+        )}
         {!agent.spawnFromBrowserAllowed && (
           <span className="muted">command locked to argv (--allow-browser-spawn to unlock)</span>
         )}

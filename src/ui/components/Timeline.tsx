@@ -175,7 +175,14 @@ function FrameRow({
       <span className="time">{formatTime(entry.ts)}</span>
       <span className="arrow">{arrowFor(entry)}</span>
       <span className="kind">{entry.kind}</span>
-      <span className="label">{labelFor(entry)}</span>
+      <span className="label">
+        {labelFor(entry)}
+        {entry.extension && (
+          <span className="badge badge-ext" title="Vendor extension, outside the ACP spec">
+            ext
+          </span>
+        )}
+      </span>
       {entry.durationMs !== undefined && <span className="ms">{entry.durationMs}ms</span>}
       {entry.violations?.length ? <span className="flag">!</span> : null}
     </button>

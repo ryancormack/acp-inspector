@@ -102,6 +102,24 @@ when the `session/prompt` response comes back with any `stopReason` other than
 Known limitation: with more than one prompt in flight on the same session, the
 cancel targets the first one that has a usable session id rather than asking which.
 
+## Vendor extensions
+
+ACP reserves a leading `_` on a method name or on any path segment for
+implementation-specific extensions, so `_kiro.dev/metadata` and `session/_vendor`
+are legal traffic rather than violations. Agents lean on them: Kiro CLI streams
+five distinct `_kiro.dev/*` notifications during a single turn.
+
+The inspector records that they exist without pretending to understand them. Each
+frame gets an `ext` badge, the toolbar lists every extension method the agent has
+used, and each method is announced once when first seen rather than complained
+about per frame. An unknown notification that is *not* an extension (and not `$/`,
+which the spec says may be ignored) still earns a line, because that is more
+likely a typo in a real method name than a deliberate extension.
+
+This matters beyond tidiness: anything your agent relies on an extension for will
+not work against a client that does not implement it, so seeing the list is the
+point.
+
 ## What it catches
 
 - **Non-JSON on stdout.** ACP says the agent MUST NOT write anything to stdout
@@ -206,13 +224,14 @@ For UI work, run the CLI with `--dev` and `pnpm dev:ui` in parallel, then open
 
 ## Status
 
-Working vertical slice, exercised against both the stub agent and a real
-Strands-based ACP agent (full turn: capability negotiation, streamed updates, a
-gated tool call answered from the UI, and the tool's side effect landing on disk).
+Working vertical slice, exercised against the stub agent and two real ACP agents:
+a Strands-based TypeScript agent and `kiro-cli acp` (Rust). Full turns in both:
+capability negotiation, streamed updates, a gated tool call answered from the UI,
+and the tool's side effect landing on disk.
 
 Not exercised yet, so treat as unproven rather than working: `elicitation/create`,
 `session/load` and `session/resume`, the real `fs/write_text_file` path, and the
-authentication flows. Verified on macOS with Node 26 against one real agent.
+authentication flows. Verified on macOS with Node 26.
 
 Not yet built:
 

@@ -54,8 +54,24 @@ export interface LogEntry {
   id?: JsonRpcId;
   /** Round-trip time, set on a response that matched an outstanding request. */
   durationMs?: number;
+  /**
+   * True for a vendor extension method: ACP reserves a leading `_` on a method
+   * or path segment for implementation-specific extensions, so these are not
+   * part of the spec even though they are legal traffic.
+   */
+  extension?: boolean;
   /** Protocol problems detected by the inspector (not by the agent). */
   violations?: string[];
+}
+
+/** A vendor extension method the agent has used, and how often. */
+export interface ExtensionUse {
+  method: string;
+  count: number;
+  /** Sequence number of the first frame that used it. */
+  firstSeq: number;
+  /** Whether it arrived as a request or a notification. */
+  kind: 'request' | 'notification';
 }
 
 /**
@@ -118,6 +134,12 @@ export interface InspectorState {
   pending: PendingRequest[];
   /** Number of `session/prompt` requests awaiting a response. */
   activePrompts: number;
+  /**
+   * Vendor extension methods the agent has used, in first-seen order. Surfaced
+   * because "this agent speaks non-standard methods" is worth knowing even when
+   * the inspector does nothing else with them.
+   */
+  extensions: ExtensionUse[];
   /** Entries dropped from the head of the ring buffer. */
   dropped: number;
 }

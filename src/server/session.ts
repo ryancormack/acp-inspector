@@ -14,6 +14,7 @@ import {
   type JsonRpcRequest,
   type LogEntry,
   type Negotiated,
+  type ExtensionUse,
   type PendingRequest,
   type ServerEvent,
 } from '../shared/wire.js';
@@ -66,6 +67,8 @@ export class InspectorSession {
   private readonly promptIds = new Map<string, { sessionId: string | null; sentAt: number }>();
   /** Prompt request ids we have asked the agent to cancel. */
   private readonly cancelledPromptIds = new Set<string>();
+  /** Vendor extension methods seen, in first-seen order. */
+  private readonly extensions = new Map<string, ExtensionUse>();
 
   constructor(private readonly options: SessionOptions) {}
 
@@ -99,6 +102,7 @@ export class InspectorSession {
       sessionId: this.sessionId,
       pending: [...this.pending.values()],
       activePrompts: this.promptIds.size,
+      extensions: [...this.extensions.values()],
       dropped: this.dropped,
     };
   }
@@ -395,6 +399,12 @@ export class InspectorSession {
     const message = parsed as JsonRpcMessage;
     const kind = classifyKind(message);
     const violations = problemsFor(message, 'in', kind);
+    const method = 'method' in message ? message.method : undefined;
+
+    const isExtension = method !== undefined && isExtensionMethod(method);
+    if (isExtension && method !== undefined) {
+      this.recordExtension(method, kind === 'request' ? 'request' : 'notification');
+    }
 
     let durationMs: number | undefined;
     if ((kind === 'response' || kind === 'error') && 'id' in message && message.id !== null) {
@@ -414,9 +424,10 @@ export class InspectorSession {
       kind,
       raw,
       msg: message,
-      method: 'method' in message ? message.method : undefined,
+      method,
       id: 'id' in message ? message.id : undefined,
       durationMs,
+      ...(isExtension ? { extension: true } : {}),
       violations: orUndefined(violations),
     });
 
@@ -484,7 +495,14 @@ export class InspectorSession {
     }
 
     if (!isRequest) {
-      if (outcome.kind === 'error') {
+      // A notification we do not handle is usually fine to drop: ACP reserves
+      // `_`-prefixed methods for vendor extensions and says `$/` notifications
+      // may be ignored outright. Kiro CLI, for instance, streams a steady flow
+      // of `_kiro.dev/*` notifications, and a complaint per frame would bury
+      // the log in the inspector's own noise. An unknown notification that is
+      // NOT one of those is worth a line, because it is more likely a typo in a
+      // real method name than a deliberate extension.
+      if (outcome.kind === 'error' && !isIgnorableNotification(message.method)) {
         this.note(`ignoring unhandled notification ${message.method}: ${outcome.error.message}`);
       }
       return;
@@ -513,6 +531,24 @@ export class InspectorSession {
     }
   }
 
+  /**
+   * Notes a vendor extension the first time it is seen, then just counts it.
+   *
+   * The agent is entitled to send these, so they are not violations. But an
+   * agent that speaks non-standard methods is a fact worth surfacing once:
+   * anything relying on them will not work against a different client.
+   */
+  private recordExtension(method: string, kind: 'request' | 'notification'): void {
+    const existing = this.extensions.get(method);
+    if (existing !== undefined) {
+      existing.count += 1;
+      return;
+    }
+    this.extensions.set(method, { method, count: 1, firstSeq: this.seq + 1, kind });
+    this.note(`vendor extension ${kind} ${method} (outside the ACP spec)`);
+    this.pushState();
+  }
+
   private failAllOutstanding(reason: string): void {
     this.promptIds.clear();
     this.cancelledPromptIds.clear();
@@ -530,6 +566,25 @@ export class InspectorSession {
 
 function idKey(id: JsonRpcId): string {
   return typeof id === 'number' ? `n:${id}` : `s:${String(id)}`;
+}
+
+/**
+ * ACP reserves a leading `_` on a method name or on any path segment for
+ * implementation-specific extensions, so `_kiro.dev/metadata` and
+ * `session/_vendor` are both extensions rather than spec methods.
+ */
+function isExtensionMethod(method: string): boolean {
+  return method.startsWith('_') || method.includes('/_');
+}
+
+/**
+ * Whether an unhandled notification can be dropped without comment. Vendor
+ * extensions are legal traffic, and the spec says `$/` notifications may be
+ * ignored outright. Anything else is more likely a typo than a deliberate
+ * extension, so it still earns a line.
+ */
+function isIgnorableNotification(method: string): boolean {
+  return isExtensionMethod(method) || method.startsWith('$/');
 }
 
 function orUndefined(list: string[]): string[] | undefined {

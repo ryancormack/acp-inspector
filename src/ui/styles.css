@@ -414,6 +414,11 @@ label.inline {
   white-space: nowrap;
 }
 
+.badge-ext {
+  border-color: #6b5a2f;
+  color: var(--stderr);
+}
+
 /* Reassembled agent output, read as prose rather than inspected as JSON. */
 .transcript {
   flex: 1 1 auto;
