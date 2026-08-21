@@ -127,6 +127,11 @@ point.
   agent bug and it corrupts the stream for every real client. It shows up flagged.
 - **Wrong params for the method**, validated against the ACP JSON Schema that ships
   inside the SDK, e.g. `params/sessionId must be string`.
+- **A session-scoped call with an empty `sessionId`**, which the schema cannot
+  catch: ACP types `SessionId` as a bare `string`, so `""` validates cleanly. The
+  agent then answers something like `-32603 No session found with id`, which reads
+  as an agent fault when it is really a call made before `session/new` returned.
+  The composer warns before you send it and the log flags it if you do.
 - **Responses that match no outstanding request**, and requests that were never
   answered when the process exited.
 - **Timings**, per request/response pair.

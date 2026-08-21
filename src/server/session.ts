@@ -564,6 +564,30 @@ export class InspectorSession {
   }
 }
 
+/**
+ * Catches a session-scoped call carrying an empty `sessionId`.
+ *
+ * The schema cannot: ACP types `SessionId` as a bare `string`, so `""` is
+ * structurally valid and validation passes it happily. The agent then rejects it
+ * with something like `-32603 No session found with id`, which reads as an agent
+ * fault when it is actually a call made before `session/new` returned. This is
+ * exactly the kind of check an inspector should own rather than defer to the
+ * schema.
+ *
+ * Only the empty case is flagged. A non-empty id we have never seen is normal:
+ * `session/load` and `session/resume` legitimately reference sessions created in
+ * an earlier run.
+ */
+function sessionScopeProblems(record: Record<string, unknown>): string[] {
+  const params = record.params;
+  if (typeof params !== 'object' || params === null) return [];
+  const sessionId = (params as { sessionId?: unknown }).sessionId;
+  if (sessionId !== '') return [];
+  return [
+    `${String(record.method)} carries an empty sessionId; create one with session/new first`,
+  ];
+}
+
 function idKey(id: JsonRpcId): string {
   return typeof id === 'number' ? `n:${id}` : `s:${String(id)}`;
 }
@@ -657,6 +681,7 @@ function problemsFor(message: JsonRpcMessage, dir: 'in' | 'out', kind: FrameKind
 
   if (typeof record.method === 'string') {
     problems.push(...validateParams(record.method, record.params).problems);
+    problems.push(...sessionScopeProblems(record));
   }
 
   if (dir === 'in' && isRequest(message) && message.method === 'initialize') {

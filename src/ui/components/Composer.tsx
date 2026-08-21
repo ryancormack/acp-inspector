@@ -43,6 +43,20 @@ export function Composer({ state, send }: ComposerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.sessionId, state.protocolVersion, state.capabilities, state.agent.cwd]);
 
+  /**
+   * Whether the composed params carry an empty `sessionId`. Surfaced as a hint
+   * rather than a block: sending a deliberately broken frame is a supported use
+   * of this tool, so the composer warns and still lets you send it.
+   */
+  const needsSession = (() => {
+    try {
+      const parsed = JSON.parse(paramsText) as { sessionId?: unknown };
+      return parsed?.sessionId === '';
+    } catch {
+      return false;
+    }
+  })();
+
   const submit = (): void => {
     let params: unknown;
     try {
@@ -100,7 +114,7 @@ export function Composer({ state, send }: ComposerProps) {
       </div>
 
       <textarea
-        className="params"
+        className={needsSession ? 'params needs-session' : 'params'}
         spellCheck={false}
         value={paramsText}
         onChange={(event) => {
@@ -109,6 +123,13 @@ export function Composer({ state, send }: ComposerProps) {
         }}
         rows={8}
       />
+      {needsSession && (
+        <p className="hint">
+          <strong>{method}</strong> needs a session and there is none yet. Press{' '}
+          <strong>initialize + session/new</strong>, or send <code>session/new</code> first. Sending
+          it anyway is allowed and the agent will reject it.
+        </p>
+      )}
       {error && <p className="violations">{error}</p>}
     </section>
   );

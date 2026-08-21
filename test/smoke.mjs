@@ -138,6 +138,19 @@ send({
 });
 await settle(400);
 
+// Structurally valid per the schema (SessionId is a bare string) but wrong: a
+// session-scoped call made before session/new returned.
+send({
+  type: 'send',
+  assignId: true,
+  message: {
+    jsonrpc: '2.0',
+    method: 'session/prompt',
+    params: { sessionId: '', prompt: [{ type: 'text', text: 'no session yet' }] },
+  },
+});
+await settle(400);
+
 /* ------------------------------------------------- cancellation scenario */
 
 // Second turn, this time cancelled at the permission gate instead of answered.
@@ -212,15 +225,29 @@ const promptDone = entries.find(
 check('prompt turn completed with a stop reason', promptDone !== undefined);
 
 const schemaFlagged = entries.filter(
-  (entry) => entry.dir === 'out' && entry.method === 'session/prompt' && entry.violations?.length,
+  (entry) =>
+    entry.dir === 'out' &&
+    entry.method === 'session/prompt' &&
+    entry.violations?.some((v) => v.includes('must be string')),
 );
-check('schema validation flagged the bad session/prompt', schemaFlagged.length === 1,
+check('schema validation flagged the wrongly-typed sessionId', schemaFlagged.length === 1,
   schemaFlagged[0]?.violations?.join('; ') ?? '');
 
 check('valid frames were not flagged', byMethod('initialize', 'out')[0]?.violations === undefined);
 
-/* ------------------------------------------------- vendor extensions */
+/* ------------------------------------------------- session scope */
 
+const emptySession = entries.find(
+  (entry) => entry.dir === 'out' && entry.raw.includes('"sessionId":""'),
+);
+check('the empty-sessionId call was captured', emptySession !== undefined);
+check(
+  'an empty sessionId is flagged even though the schema accepts it',
+  emptySession?.violations?.some((v) => v.includes('empty sessionId')) === true,
+  emptySession?.violations?.join('; ') ?? 'no violations',
+);
+
+/* ------------------------------------------------- vendor extensions */
 const extFrames = entries.filter((entry) => entry.extension === true);
 check('vendor extension frames are flagged as extensions', extFrames.length >= 2,
   `${extFrames.length} frames`);

@@ -592,6 +592,21 @@ label.inline {
   line-height: 1.45;
 }
 
+/* A missing session is a prerequisite problem, not a syntax error, so the field
+   is marked rather than rejected. */
+.params.needs-session {
+  border-color: #6b5a2f;
+}
+
+.hint {
+  margin: 0;
+  padding: 6px 8px;
+  border-left: 2px solid var(--stderr);
+  background: #241f16;
+  color: var(--text);
+  font-size: 12px;
+}
+
 details summary {
   cursor: pointer;
   color: var(--muted);
