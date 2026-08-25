@@ -12,12 +12,24 @@ Requires Node.js 22 or newer.
 npx @ryancormack/acp-debugger -- <your-agent-command>
 ```
 
-For example, to inspect Kiro CLI in a project:
+Two common examples:
+
+**Kiro CLI**
 
 ```bash
 npx @ryancormack/acp-debugger \
   --cwd ~/code/my-project \
   -- kiro-cli acp
+```
+
+**A TypeScript agent package that needs AWS configuration**
+
+```bash
+npx @ryancormack/acp-debugger \
+  --cwd ~/code/my-project \
+  --env AWS_PROFILE=my-profile \
+  --env AWS_REGION=us-east-1 \
+  -- node ~/code/my-agent/packages/agent/dist/acp-agent.cjs
 ```
 
 The debugger prints and opens a tokenised local URL. In the browser:
