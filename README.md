@@ -163,6 +163,10 @@ pnpm typecheck
 
 For UI development, run the CLI with `--dev` and run `pnpm dev:ui` in another terminal. The test suite includes transcript unit tests and an end-to-end session against the stub ACP agent.
 
+## Issues and feedback
+
+Bug reports and feature requests are welcome on the [GitHub issue tracker](https://github.com/ryancormack/acp-inspector/issues). If you hit a bug, please include the agent command you ran and any flagged rows or errors from the timeline.
+
 ## License
 
 MIT
