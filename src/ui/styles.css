@@ -80,6 +80,18 @@ pre,
   color: var(--muted);
 }
 
+.toolbar-link {
+  margin-left: auto;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.toolbar-link:hover {
+  text-decoration: underline;
+}
+
 .caps-label {
   color: var(--muted);
   margin-left: 6px;

@@ -60,6 +60,15 @@ export function Toolbar({ state, connection, send, onConnectSequence }: ToolbarP
         <button type="button" onClick={() => send({ type: 'clear' })}>
           Clear log
         </button>
+        <a
+          className="toolbar-link"
+          href="https://github.com/ryancormack/acp-inspector/issues"
+          target="_blank"
+          rel="noreferrer noopener"
+          title="Report a bug or request a feature on GitHub"
+        >
+          Report an issue
+        </a>
       </div>
 
       <div className="toolbar-row">
