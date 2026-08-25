@@ -1,207 +1,112 @@
-# acp-debugger
+# ACP Debugger
 
-A browser-based inspector for the [Agent Client Protocol](https://agentclientprotocol.com).
-Launches your ACP agent over stdio, acts as a real ACP **client**, and shows every
-JSON-RPC message in both directions along with the agent's stderr.
+A browser-based client and debugger for the [Agent Client Protocol](https://agentclientprotocol.com). It launches an ACP agent over stdio and gives you a live view of JSON-RPC traffic, streamed messages, tool calls, permission requests, stderr, and protocol errors.
+
+![ACP Debugger showing a completed prompt turn](docs/images/overview.png)
+
+## Quick start
+
+Requires Node.js 22 or newer.
 
 ```bash
-npx @ryancormack/acp-debugger -- node dist/acp-agent.cjs
+npx @ryancormack/acp-debugger -- <your-agent-command>
 ```
 
-That prints a `http://127.0.0.1:6274/?token=...` URL and opens it. Press **Launch**,
-then **initialize + session/new**, then send a `session/prompt`.
-
-For an agent that needs credentials or config, pass them with `--env`. They go into
-the agent's environment when it is spawned, which a shell prefix on the inspector's
-own command line would not do:
+For example, to inspect Kiro CLI in a project:
 
 ```bash
-acp-debugger \
+npx @ryancormack/acp-debugger \
+  --cwd ~/code/my-project \
+  -- kiro-cli acp
+```
+
+The debugger prints and opens a tokenised local URL. In the browser:
+
+1. Select **Launch** to start the agent.
+2. Select **initialize + session/new** to negotiate capabilities and create a session.
+3. Compose a `session/prompt` and select **Send**.
+
+See the [usage walkthrough](docs/usage.md) for a complete debugging session with screenshots.
+
+## What you can do
+
+- Capture every inbound and outbound JSON-RPC frame, plus the agent's stderr.
+- Read streamed messages as a collapsed transcript or inspect the original frames.
+- Inspect tool-call input, output, content blocks, file locations, and diffs.
+- Answer `session/request_permission` and `elicitation/create` requests in the browser.
+- Toggle advertised client capabilities to test how an agent degrades.
+- Compose valid or deliberately malformed requests with free-form JSON.
+- Cancel an in-flight prompt and verify that the agent reports a cancelled turn.
+- Filter the timeline by direction, message kind, method, text, or problems only.
+- See vendor extension methods, such as `_kiro.dev/*`, without losing their frames.
+- Resize the timeline, detail, and composer panes; sizes persist across reloads.
+
+## Running an agent
+
+Everything after `--` is the command used to start the agent. Use `--cwd` to set the agent's working directory and the `cwd` sent in `session/new`:
+
+```bash
+npx @ryancormack/acp-debugger \
+  --cwd ~/code/my-project \
+  -- node dist/acp-agent.cjs
+```
+
+Pass agent-specific configuration with repeatable `--env` options:
+
+```bash
+npx @ryancormack/acp-debugger \
   --cwd ~/code/my-project \
   --env AWS_PROFILE=my-profile \
   --env AWS_REGION=us-east-1 \
-  -- ~/code/my-agent/packages/agent/dist/acp-agent.cjs
+  -- ~/code/my-agent/dist/acp-agent.cjs
 ```
 
-`--cwd` is both the agent's working directory and the `cwd` sent in `session/new`,
-and it is the confinement root for any `fs/*` callbacks.
+The session cwd also confines ACP `fs/read_text_file` and `fs/write_text_file` callbacks. Requests cannot access paths outside it.
 
-For a walkthrough of an actual debugging session, with screenshots, see
-[`docs/usage.md`](docs/usage.md).
+## Reading the timeline
 
-## Why a client, not a sniffer
+A real agent can emit hundreds of `session/update` notifications during one turn. The **updates** filter controls how they appear:
 
-In ACP the client side is load-bearing. The agent calls back into you constantly,
-and `session/request_permission` is mandatory baseline: an agent that gates a tool
-call behind it and never gets an answer stops dead with nothing in the log to
-explain why. So the inspector implements the client half:
-
-| Agent calls | Inspector does |
+| Setting | Result |
 | --- | --- |
-| `session/update` | logs the stream (message chunks, tool calls, plans, usage) |
-| `session/request_permission` | holds it open and shows the agent's own options as buttons |
-| `fs/read_text_file` / `fs/write_text_file` | performs it, confined to the session cwd |
-| `terminal/*` | rejects with `-32601` unless you advertise the capability |
-| `elicitation/create` | holds it open for a manual answer |
+| `collapsed` | Reassembles chunks into messages and groups tool-call updates. This is the default. |
+| `raw frames` | Shows every notification exactly as it crossed stdio. |
+| `hidden` | Hides `session/update` rows. |
 
-## The capability matrix is the point
+Collapsed rows retain links to every source frame, so folding the transcript does not discard the underlying traffic. Selecting a tool call shows its latest status and all available `rawInput`, `rawOutput`, locations, content blocks, and diffs.
 
-The toolbar toggles what goes into `clientCapabilities` on `initialize`. Turn
-`fs.readTextFile` off, re-initialize, and watch whether your agent degrades
-gracefully or falls over. Zed always says yes, so this is the path those branches
-never otherwise take. Calling a method whose capability you did not advertise gets
-`-32601` rather than being quietly serviced, because that is the agent's bug and
-hiding it defeats the tool.
+## Acting as an ACP client
 
-## Reading what the agent actually said
+ACP agents call methods on their client, so observing stdio alone is not enough to complete many turns. ACP Debugger implements the client-side interactions needed for useful testing:
 
-A real agent streams token by token, so one prompt turn can produce hundreds of
-`session/update` notifications. Individually they are noise: the message the agent
-produced only exists as the concatenation of their content chunks.
-
-The **updates** control in the filter bar has three settings:
-
-| Setting | What you get |
+| Agent call | Behaviour |
 | --- | --- |
-| `collapsed` (default) | one row per message, tool call, or plan, with the chunks joined into readable text |
-| `raw frames` | every `session/update` frame individually, as it crossed stdio |
-| `hidden` | no `session/update` rows at all |
+| `session/update` | Captured and folded into readable transcript rows. |
+| `session/request_permission` | Held open until you choose one of the agent's options, cancel it, or return an error. |
+| `elicitation/create` | Held open for a manual response. |
+| `fs/read_text_file` / `fs/write_text_file` | Performed when advertised, within the session cwd. |
+| `terminal/*` | Not implemented; leave terminal capabilities disabled. |
 
-Collapsed grouping follows the protocol rather than guessing. Chunks are keyed by
-`messageId`, which ACP defines as the marker for chunks belonging to the same
-message, so a message stays one row even when a tool call is interleaved with it.
-Where an agent sends no `messageId`, consecutive chunks of the same role are
-merged and any non-`session/update` frame closes the run. A `tool_call` and all
-its `tool_call_update`s become one row carrying the latest status. `plan`,
-`usage_update` and the other snapshot kinds collapse to their newest value.
+The capability checkboxes control what is advertised during `initialize`. If an agent calls a capability-dependent method that was not advertised, the debugger returns `-32601` instead of silently accepting the call.
 
-Nothing is lost: the row shows how many frames it folded, and the detail pane
-lists every one of them as a link that jumps to the raw frame. Non-text content
-blocks cannot be concatenated into prose, so they are listed as attachments
-rather than silently dropped.
+## Finding protocol problems
 
-A tool call's row carries the parts worth debugging, gathered from across its
-updates: `rawInput` (the arguments the agent actually passed), `rawOutput`,
-`locations`, and its `content` blocks. A `diff` block shows both sides verbatim
-rather than being run through a diff algorithm, so nothing is inferred that the
-agent did not send. `tool_call_update` supplies whole fields rather than deltas,
-so the latest update carrying a field replaces it and an update that omits one
-leaves the earlier value intact.
+Frames are checked against the ACP schema supplied by `@agentclientprotocol/sdk`. Problem rows are flagged in the timeline, including:
 
-`src/shared/transcript.ts` is pure and has no DOM dependency, so the grouping
-rules are unit tested directly (`test/transcript.test.mjs`).
+- non-JSON output on stdout
+- params that do not match the method
+- empty session IDs on session-scoped calls
+- responses with no matching request
+- requests still unanswered when the process exits
+- non-cancelled prompt responses after cancellation
 
-## Cancelling a turn
+The composer intentionally remains permissive. You can edit the method and params, send malformed traffic, and observe how the agent responds.
 
-While a `session/prompt` is in flight the toolbar shows **Cancel turn**. ACP puts
-obligations on both sides of a cancellation, and the client's half is the one that
-is easy to miss: every outstanding `session/request_permission` MUST be answered
-with the `cancelled` outcome, or the agent sits waiting on a decision that will
-never arrive. So the button sends `session/cancel`, closes out the permission
-requests the inspector is holding, and then checks the agent's half by flagging it
-when the `session/prompt` response comes back with any `stopReason` other than
-`cancelled`.
+Vendor extension methods are retained and marked with an `ext` badge. They are surfaced rather than treated as standard ACP methods or silently ignored.
 
-Known limitation: with more than one prompt in flight on the same session, the
-cancel targets the first one that has a usable session id rather than asking which.
+## CLI options
 
-## Vendor extensions
-
-ACP reserves a leading `_` on a method name or on any path segment for
-implementation-specific extensions, so `_kiro.dev/metadata` and `session/_vendor`
-are legal traffic rather than violations. Agents lean on them: Kiro CLI streams
-five distinct `_kiro.dev/*` notifications during a single turn.
-
-The inspector records that they exist without pretending to understand them. Each
-frame gets an `ext` badge, the toolbar lists every extension method the agent has
-used, and each method is announced once when first seen rather than complained
-about per frame. An unknown notification that is *not* an extension (and not `$/`,
-which the spec says may be ignored) still earns a line, because that is more
-likely a typo in a real method name than a deliberate extension.
-
-This matters beyond tidiness: anything your agent relies on an extension for will
-not work against a client that does not implement it, so seeing the list is the
-point.
-
-## What it catches
-
-- **Non-JSON on stdout.** ACP says the agent MUST NOT write anything to stdout
-  that is not an ACP message. A stray `console.log` is the single most common
-  agent bug and it corrupts the stream for every real client. It shows up flagged.
-- **Wrong params for the method**, validated against the ACP JSON Schema that ships
-  inside the SDK, e.g. `params/sessionId must be string`.
-- **A session-scoped call with an empty `sessionId`**, which the schema cannot
-  catch: ACP types `SessionId` as a bare `string`, so `""` validates cleanly. The
-  agent then answers something like `-32603 No session found with id`, which reads
-  as an agent fault when it is really a call made before `session/new` returned.
-  The composer warns before you send it and the log flags it if you do.
-- **Responses that match no outstanding request**, and requests that were never
-  answered when the process exited.
-- **Timings**, per request/response pair.
-
-## Deliberately malformed traffic
-
-The composer's method field is editable and params are free-form JSON, and the
-message is serialised exactly as composed. Sending a request with a string id, a
-missing `jsonrpc`, or params for a different method is a supported use, because
-half of debugging an agent is seeing how it handles traffic a well-behaved editor
-would never send.
-
-## Relationship to `@agentclientprotocol/sdk`
-
-The SDK is used for everything it can be trusted to own:
-
-- **Types** — `shared/wire.ts` aliases `AnyMessage`, `AnyRequest`, `ErrorResponse`
-  rather than redeclaring them.
-- **Method registry** — `AGENT_METHODS` / `CLIENT_METHODS` / `PROTOCOL_METHODS`
-  drive the composer dropdown and the capability gate table, so a method added
-  upstream is not silently unreachable here. (This already paid for itself:
-  `providers/*`, `nes/*`, `document/did*`, `session/fork` and `mcp/*` are in the
-  registry but not in the protocol docs' method list.)
-- **Error codes** — `RequestError.methodNotFound()` and friends.
-- **Schema** — `@agentclientprotocol/sdk/schema/schema.json`, version-locked to the
-  installed SDK.
-
-The transport is **not** the SDK's `Connection`. Two reasons: the log needs the
-bytes exactly as they crossed stdio, before any normalisation could drop an
-unknown field or a malformed frame; and the inspector must be able to *send*
-frames a conformant client would refuse to construct.
-
-Two things the SDK has that would be better than what is here, but which are not
-in its `exports` map and so cannot be imported without reaching past the package
-contract:
-
-- `dist/schema/zod.gen.js` — 265 generated per-type zod schemas. This is exactly
-  what a validator wants. Without it, `src/server/validate.ts` carries a
-  hand-written method → schema-definition table, because the shipped JSON Schema
-  types `AgentRequest.method` as a bare `string` and `params` as an `anyOf` over
-  every request's params, so a message-level check passes params belonging to a
-  different method. The table is verified against the schema at startup and any
-  unmapped method is reported as unchecked rather than as valid.
-- `dist/jsonrpc.js` — `isRequestMessage` and friends, reimplemented locally in
-  `session.ts`.
-
-Both would make good upstream requests.
-
-## Security
-
-This process spawns commands on your machine, so the control plane is locked down
-rather than merely tidy. MCP Inspector shipped CVE-2025-49596 (CVSS 9.4) because a
-localhost server with no auth and no origin check is reachable from any page the
-developer has open, via DNS rebinding.
-
-- Bound to `127.0.0.1` unconditionally. There is no flag to change it.
-- A random per-run token is required on the websocket handshake.
-- The `Host` header must itself be loopback, which is the rebinding guard.
-- `Origin`, when present, must be an origin we served.
-- **The agent command comes from argv, not from the browser.** Editing it in the UI
-  requires `--allow-browser-spawn`.
-- `fs/*` requests are confined to the session cwd, so an agent under development
-  cannot talk the inspector into reading `~/.ssh`.
-
-## Options
-
-```
+```text
 --port <n>              Port to serve on (default 6274)
 --cwd <path>            Working directory for the agent and the ACP session
 --env KEY=VALUE         Extra environment variable for the agent (repeatable)
@@ -211,118 +116,41 @@ developer has open, via DNS rebinding.
 -h, --help              Show usage
 ```
 
+The browser cannot change the agent command unless you explicitly pass `--allow-browser-spawn`.
+
+## Security
+
+ACP Debugger runs commands and may service filesystem requests on your machine. Its local control plane is restricted accordingly:
+
+- the server binds only to `127.0.0.1`
+- each run requires a random session token
+- WebSocket handshakes validate the token, `Host`, and `Origin`
+- the agent command comes from the CLI by default, not from the browser
+- filesystem callbacks are confined to the session cwd
+
+Only run agents you trust, and review requested permissions before allowing tool calls.
+
+## Troubleshooting
+
+**The agent launches, but `initialize` never completes.** Confirm the command starts an ACP server rather than an interactive or one-shot chat process. For Kiro CLI, use `kiro-cli acp`, not `kiro-cli chat --no-interactive`.
+
+**The agent reports `No session found with id`.** Run **initialize + session/new** before sending a session-scoped request. The composer warns when no active session ID is available.
+
+**An `fs/*` method returns `-32601`.** Enable the corresponding capability before initializing, then create a new session. A method called without its advertised capability is treated as an agent error.
+
+**A row contains prose or escape codes instead of JSON.** The agent wrote non-protocol output to stdout. ACP reserves stdout for JSON-RPC; diagnostic output belongs on stderr. Enable **only problems** to isolate these rows.
+
 ## Development
 
 ```bash
 pnpm install
-pnpm build          # tsc for the server, vite for the UI
-pnpm test           # builds, then runs the end-to-end smoke test
+pnpm build
+pnpm test
 pnpm typecheck
 ```
 
-`pnpm test` runs the transcript unit tests, then boots the real CLI against
-`test/fixtures/stub-agent.mjs`, a
-deliberately imperfect agent that streams updates, calls back into the client,
-gates a tool call behind a permission request, calls `terminal/create` without the
-capability, writes a stray line to stdout, and logs to stderr. The test drives a
-full prompt turn over the real control socket and asserts on what was captured.
+For UI development, run the CLI with `--dev` and run `pnpm dev:ui` in another terminal. The test suite includes transcript unit tests and an end-to-end session against the stub ACP agent.
 
-For UI work, run the CLI with `--dev` and `pnpm dev:ui` in parallel, then open
-`http://127.0.0.1:6275/?token=<token from the CLI>` for HMR.
+## License
 
-## Releasing
-
-`.github/workflows/ci.yml` runs typecheck, both test suites, and a check that the
-packed tarball actually contains `dist/server/cli.js` plus the built UI. That last
-one exists because a green test run would still hide a `files` or path mistake that
-ships a CLI with no UI, which fails only when a user runs `npx`.
-
-Publishing is driven by a GitHub release:
-
-1. Push to `main` and let CI pass.
-2. Create a release tagged `vX.Y.Z`.
-3. `.github/workflows/publish.yml` derives the version from the tag
-   (`npm version ${GITHUB_REF_NAME#v} --no-git-tag-version`), rebuilds, retests,
-   and publishes.
-
-### Trusted publishing, no credential
-
-Publishing authenticates by OIDC. `pnpm publish` exchanges the workflow's id token
-for a short-lived npm token, so there is no publish credential in this repository
-and nothing to rotate or leak.
-
-This requires a **trusted publisher** on the package's npm settings page:
-npmjs.com → the package → Settings → Publishing access → GitHub Actions, this
-repository, workflow `publish.yml`. Rename that file and publishing breaks until
-npm is updated to match.
-
-Without it the exchange returns 404 and `pnpm` reports
-`Skipped OIDC: ERR_PNPM_AUTH_TOKEN_EXCHANGE`, then falls back to token auth. With
-no token either, the registry answers `404 Not Found - PUT` rather than `401`,
-because npm will not confirm whether a scoped package exists to a caller that
-cannot see it. A 404 on publish means "not authenticated", not "not found".
-
-While in those settings, select *Require two-factor authentication and disallow
-bypass 2fa tokens*. npm confirms that stays compatible with trusted publishers,
-and it closes the token path off entirely.
-
-The first release of a package cannot use this: a trusted publisher is configured
-per package, so the package has to exist first. Publish `v0.0.1` from a laptop with
-`npm publish --access public`, then configure the publisher and let CI take over.
-
-### Who can trigger what
-
-The two workflows are separated by trust rather than by convention:
-
-- **`ci.yml` uses `pull_request`, never `pull_request_target`, and reads no
-  secrets.** A fork's PR therefore runs with a read-only token and cannot reach
-  anything: the worst it can do is waste runner minutes. `pull_request_target`
-  would run that same untrusted code with write permissions and secrets in scope,
-  which is how public repositories get their tokens stolen.
-- **`publish.yml` only fires on a published release**, and creating a release
-  requires write access, so an outside contributor cannot trigger it at all.
-
-Beyond that:
-
-- Both workflows pin every action to an immutable **commit SHA**. A tag like `v4`
-  is mutable, so if it is repointed or the action's repository is compromised, the
-  new code runs in the job that can mint a publish token.
-- `NODE_AUTH_TOKEN` is set **on the publish step only**, so it is absent while
-  dependency install and build scripts run.
-- Both installs use `--frozen-lockfile`, so nothing can silently resolve
-  dependency versions that were never reviewed.
-
-There is deliberately **no environment approval gate**. Creating a release already
-requires write access, so for a single maintainer an approval step adds a click
-without adding a boundary; the controls that carry weight are on npm (a trusted
-publisher plus *disallow bypass 2fa tokens*). To add one anyway, create an
-`npm-publish` environment with required reviewers, add `environment: npm-publish` to
-the publish job, and name that environment on the npm trusted publisher so the OIDC
-token is only issued after an approval.
-
-One thing must be configured by hand, because a workflow cannot grant it to
-itself: if this repository is made public, set Actions → *Fork pull request
-workflows* to **require approval for all outside collaborators**. The default only
-gates first-time contributors.
-
-## Status
-
-Working vertical slice, exercised against the stub agent and two real ACP agents:
-a Strands-based TypeScript agent and `kiro-cli acp` (Rust). Full turns in both:
-capability negotiation, streamed updates, a gated tool call answered from the UI,
-and the tool's side effect landing on disk.
-
-Not exercised yet, so treat as unproven rather than working: `elicitation/create`,
-`session/load` and `session/resume`, the real `fs/write_text_file` path, and the
-authentication flows. Verified on macOS with Node 26.
-
-Not yet built:
-
-- `terminal/*` execution (currently advertised-but-unimplemented returns `-32603`)
-- Tap mode: sit between a real editor and the agent to capture what Zed actually
-  sends, logging over a side channel since stdout is reserved for ACP
-- Export/import of a captured session
-- The draft Streamable HTTP transport
-
-There is no linter. Two `eslint-disable` comments in `src/ui` mark deliberate
-`useEffect` dependency omissions but currently lint nothing.
+MIT
