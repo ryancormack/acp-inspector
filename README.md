@@ -26,6 +26,9 @@ acp-debugger \
 `--cwd` is both the agent's working directory and the `cwd` sent in `session/new`,
 and it is the confinement root for any `fs/*` callbacks.
 
+For a walkthrough of an actual debugging session, with screenshots, see
+[`docs/usage.md`](docs/usage.md).
+
 ## Why a client, not a sniffer
 
 In ACP the client side is load-bearing. The agent calls back into you constantly,
