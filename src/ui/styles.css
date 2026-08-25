@@ -251,7 +251,9 @@ label.inline {
 .panes {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: minmax(340px, 1.4fr) minmax(320px, 1fr);
+  /* Column 1 is dragged by the vertical splitter; minmax(0,1fr) lets the detail
+     pane shrink below its content instead of forcing the grid wider. */
+  grid-template-columns: var(--timeline-width, 760px) 7px minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -565,12 +567,77 @@ label.inline {
 /* ------------------------------------------------------------------- composer */
 
 .composer {
+  /* Height is dragged by the horizontal splitter above it. flex-shrink is off so
+     a long timeline cannot squash the composer away. */
+  flex: 0 0 var(--composer-height, 260px);
   border-top: 1px solid var(--line);
   background: var(--panel);
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-height: 0;
+}
+
+/* ------------------------------------------------------------------ splitters */
+
+.splitter {
+  position: relative;
+  background: var(--line);
+  flex: 0 0 auto;
+}
+
+.splitter:hover,
+.splitter:focus-visible {
+  background: var(--accent);
+  outline: none;
+}
+
+.splitter-vertical {
+  cursor: col-resize;
+}
+
+.splitter-horizontal {
+  height: 7px;
+  cursor: row-resize;
+}
+
+/* A visible grip, and a hit area larger than the 7px bar so the handle is
+   grabbable without pixel-hunting. */
+.splitter-grip {
+  position: absolute;
+  background: var(--muted);
+  border-radius: 2px;
+  opacity: 0.5;
+}
+
+.splitter:hover .splitter-grip,
+.splitter:focus-visible .splitter-grip {
+  background: #fff;
+  opacity: 0.9;
+}
+
+.splitter-vertical .splitter-grip {
+  top: 50%;
+  left: 2px;
+  width: 3px;
+  height: 34px;
+  transform: translateY(-50%);
+}
+
+.splitter-horizontal .splitter-grip {
+  left: 50%;
+  top: 2px;
+  height: 3px;
+  width: 34px;
+  transform: translateX(-50%);
+}
+
+.splitter-vertical::after,
+.splitter-horizontal::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
 }
 
 .composer-head {
@@ -586,7 +653,11 @@ label.inline {
 }
 
 .params {
-  resize: vertical;
+  /* Fills whatever height the composer splitter was dragged to. Its own resize
+     handle is off: two competing resize mechanisms in one box fight each other. */
+  flex: 1 1 auto;
+  min-height: 0;
+  resize: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   line-height: 1.45;

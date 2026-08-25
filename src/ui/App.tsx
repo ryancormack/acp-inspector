@@ -1,19 +1,50 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Composer } from './components/Composer';
 import { Detail } from './components/Detail';
 import { PendingPanel } from './components/PendingPanel';
+import { Splitter } from './components/Splitter';
 import { Timeline } from './components/Timeline';
 import { buildRows, DEFAULT_FILTERS, type Filters } from './rows';
 import { frameRowId } from '../shared/transcript';
 import { Toolbar } from './components/Toolbar';
 import { clientCapabilities } from './templates';
 import { useInspector } from './useInspector';
+import { usePersistentSize } from './usePersistentSize';
+
+/** Defaults, used on first run and restored by double-clicking a splitter. */
+const DEFAULT_TIMELINE_WIDTH = 760;
+const DEFAULT_COMPOSER_HEIGHT = 260;
+const MIN_PANE = 240;
+const MIN_COMPOSER = 96;
 
 export function App() {
   const { connection, state, entries, notices, send, dismissNotice } = useInspector();
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [follow, setFollow] = useState(true);
+  const panesRef = useRef<HTMLElement>(null);
+
+  // Bounds are read at drag time rather than captured, so resizing the window
+  // does not leave a pane pinned outside the viewport.
+  const timelineBounds = useCallback(() => {
+    const width = panesRef.current?.clientWidth ?? window.innerWidth;
+    return { min: MIN_PANE, max: Math.max(MIN_PANE, width - MIN_PANE) };
+  }, []);
+  const composerBounds = useCallback(
+    () => ({ min: MIN_COMPOSER, max: Math.max(MIN_COMPOSER, window.innerHeight - 320) }),
+    [],
+  );
+
+  const [timelineWidth, setTimelineWidth] = usePersistentSize(
+    'acp-debugger.timelineWidth',
+    DEFAULT_TIMELINE_WIDTH,
+    timelineBounds,
+  );
+  const [composerHeight, setComposerHeight] = usePersistentSize(
+    'acp-debugger.composerHeight',
+    DEFAULT_COMPOSER_HEIGHT,
+    composerBounds,
+  );
 
   const rows = useMemo(() => buildRows(entries, filters), [entries, filters]);
   const selected = useMemo(
@@ -77,7 +108,15 @@ export function App() {
   }
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      style={
+        {
+          '--timeline-width': `${timelineWidth}px`,
+          '--composer-height': `${composerHeight}px`,
+        } as CSSProperties
+      }
+    >
       <Toolbar
         state={state}
         connection={connection}
@@ -100,7 +139,7 @@ export function App() {
 
       <PendingPanel pending={state.pending} send={send} />
 
-      <main className="panes">
+      <main className="panes" ref={panesRef}>
         <Timeline
           rows={rows}
           totalFrames={entries.length}
@@ -111,8 +150,26 @@ export function App() {
           follow={follow}
           onFollowChange={setFollow}
         />
+        <Splitter
+          orientation="vertical"
+          label="Resize the timeline and detail panes"
+          onDragTo={(clientX) => {
+            const left = panesRef.current?.getBoundingClientRect().left ?? 0;
+            setTimelineWidth(clientX - left);
+          }}
+          onNudge={(delta) => setTimelineWidth(timelineWidth + delta)}
+          onReset={() => setTimelineWidth(DEFAULT_TIMELINE_WIDTH)}
+        />
         <Detail row={selected} onSelectFrame={selectFrame} />
       </main>
+
+      <Splitter
+        orientation="horizontal"
+        label="Resize the composer"
+        onDragTo={(clientY) => setComposerHeight(window.innerHeight - clientY)}
+        onNudge={(delta) => setComposerHeight(composerHeight - delta)}
+        onReset={() => setComposerHeight(DEFAULT_COMPOSER_HEIGHT)}
+      />
 
       <Composer state={state} send={send} />
     </div>
