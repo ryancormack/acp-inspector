@@ -23,15 +23,16 @@ jobs:
     runs-on: ubuntu-latest
     # No `environment:` gate. Creating a release already requires write access, so
     # for a single maintainer an approval step adds a click without adding a
-    # boundary. The controls that do carry weight live on npm: a trusted publisher
-    # plus the "disallow bypass 2fa tokens" publishing-access option.
+    # boundary. The controls that do carry weight live on npm: the trusted
+    # publisher plus the "disallow bypass 2fa tokens" publishing-access option.
     #
     # To add the gate anyway: create an `npm-publish` environment with required
-    # reviewers, scope NPM_TOKEN to it, and add `environment: npm-publish` here.
+    # reviewers, add `environment: npm-publish` here, and name that environment on
+    # the npm trusted publisher so the OIDC token is only issued after approval.
     steps:
       # Third-party and first-party actions are pinned to immutable SHAs. A tag
       # like `v4` is mutable: if it is repointed, or the action's repo is
-      # compromised, the new code runs in the one job that can see NPM_TOKEN.
+      # compromised, the new code runs in the job that can mint a publish token.
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -48,9 +49,6 @@ jobs:
 
       # --frozen-lockfile so a release can only ship the dependency versions that
       # were reviewed into the lockfile.
-      #
-      # NODE_AUTH_TOKEN is deliberately NOT set on this step: dependency install
-      # scripts run here, and they have no business seeing the publish token.
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -69,18 +67,13 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           npm version "$VERSION" --no-git-tag-version
 
-      # Phase 1 (first publish): authenticate with NPM_TOKEN. A trusted publisher
-      # is configured on a package's own npm settings page, so it cannot be set up
-      # until the package exists -- the first release has to use a token.
+      # Authenticates by OIDC trusted publishing: pnpm exchanges the workflow's
+      # id token for a short-lived npm token, so there is no credential in this
+      # repository at all. It requires a trusted publisher configured on the
+      # package's own npm settings page, naming this repo and this workflow file.
+      # Renaming this file breaks publishing until npm is updated to match.
       #
-      # Phase 2 (from the second release): configure the trusted publisher on npm,
-      # then delete the `env:` block below and add `--provenance` to the command.
-      # Publishing then needs no long-lived credential at all, which is how
-      # ryancormack/strands-acp works today.
-      #
-      # The token is scoped to this single step, so it is never in the environment
-      # while third-party install or build scripts are running.
+      # --provenance attaches a signed SLSA attestation. It needs a public source
+      # repository, which this is.
       - name: Publish to NPM
-        run: pnpm publish --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm publish --no-git-checks --provenance

@@ -245,27 +245,30 @@ Publishing is driven by a GitHub release:
    (`npm version ${GITHUB_REF_NAME#v} --no-git-tag-version`), rebuilds, retests,
    and publishes.
 
-It needs an `NPM_TOKEN` repository secret with publish rights for the **first**
-release only.
+### Trusted publishing, no credential
 
-### Token first, then trusted publishing
+Publishing authenticates by OIDC. `pnpm publish` exchanges the workflow's id token
+for a short-lived npm token, so there is no publish credential in this repository
+and nothing to rotate or leak.
 
-A trusted publisher is configured on a package's own npm settings page, so it
-cannot be set up before the package exists. The first release therefore
-authenticates with a token; every release after that can drop it:
+This requires a **trusted publisher** on the package's npm settings page:
+npmjs.com → the package → Settings → Publishing access → GitHub Actions, this
+repository, workflow `publish.yml`. Rename that file and publishing breaks until
+npm is updated to match.
 
-1. Add an `NPM_TOKEN` secret with publish rights.
-2. Release `v0.0.1`. The workflow publishes with the token.
-3. On npmjs.com, open the package → Settings → Publishing access and add a
-   **trusted publisher**: GitHub Actions, this repository, workflow
-   `publish.yml`. While there, select *Require two-factor authentication and
-   disallow bypass 2fa tokens* — npm confirms this stays compatible with trusted
-   publishers, and it closes the token path off entirely.
-4. Delete the `env: NODE_AUTH_TOKEN` block from `publish.yml` and delete the
-   `NPM_TOKEN` secret. Publishing now needs no long-lived credential.
-5. If the repository is public, add `--provenance` to the publish step so releases
-   carry a signed SLSA attestation. Provenance requires a public repository; the
-   workflow already grants the `id-token: write` it needs.
+Without it the exchange returns 404 and `pnpm` reports
+`Skipped OIDC: ERR_PNPM_AUTH_TOKEN_EXCHANGE`, then falls back to token auth. With
+no token either, the registry answers `404 Not Found - PUT` rather than `401`,
+because npm will not confirm whether a scoped package exists to a caller that
+cannot see it. A 404 on publish means "not authenticated", not "not found".
+
+While in those settings, select *Require two-factor authentication and disallow
+bypass 2fa tokens*. npm confirms that stays compatible with trusted publishers,
+and it closes the token path off entirely.
+
+The first release of a package cannot use this: a trusted publisher is configured
+per package, so the package has to exist first. Publish `v0.0.1` from a laptop with
+`npm publish --access public`, then configure the publisher and let CI take over.
 
 ### Who can trigger what
 
@@ -283,7 +286,7 @@ Beyond that:
 
 - Both workflows pin every action to an immutable **commit SHA**. A tag like `v4`
   is mutable, so if it is repointed or the action's repository is compromised, the
-  new code runs in the one job that can see `NPM_TOKEN`.
+  new code runs in the job that can mint a publish token.
 - `NODE_AUTH_TOKEN` is set **on the publish step only**, so it is absent while
   dependency install and build scripts run.
 - Both installs use `--frozen-lockfile`, so nothing can silently resolve
@@ -293,8 +296,9 @@ There is deliberately **no environment approval gate**. Creating a release alrea
 requires write access, so for a single maintainer an approval step adds a click
 without adding a boundary; the controls that carry weight are on npm (a trusted
 publisher plus *disallow bypass 2fa tokens*). To add one anyway, create an
-`npm-publish` environment with required reviewers, scope `NPM_TOKEN` to it, and add
-`environment: npm-publish` to the publish job.
+`npm-publish` environment with required reviewers, add `environment: npm-publish` to
+the publish job, and name that environment on the npm trusted publisher so the OIDC
+token is only issued after an approval.
 
 One thing must be configured by hand, because a workflow cannot grant it to
 itself: if this repository is made public, set Actions → *Fork pull request
