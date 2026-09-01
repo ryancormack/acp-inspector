@@ -56,7 +56,13 @@ export function startHttpServer(options: HttpServerOptions): Server {
       respondText(res, 403, 'refused: Host header is not loopback');
       return;
     }
-    void serveStatic(req, res, uiDir);
+    // A throw in this handler would otherwise become an unhandled rejection,
+    // which Node treats as fatal: one bad request would end the session and
+    // take the agent subprocess and the whole transcript with it.
+    void serveStatic(req, res, uiDir).catch((error: unknown) => {
+      if (!res.headersSent) respondText(res, 500, `internal error: ${String(error)}`);
+      else res.end();
+    });
   });
 
   const wss = new WebSocketServer({ noServer: true });
@@ -181,7 +187,18 @@ async function serveStatic(
   const requested = url.pathname === '/' ? '/index.html' : url.pathname;
 
   const root = resolve(uiDir);
-  const candidate = resolve(join(root, normalize(decodeURIComponent(requested))));
+
+  // decodeURIComponent throws on a malformed escape (`/%`), so the decode is
+  // its own step: a client that sends nonsense gets 400, not a dead server.
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(requested);
+  } catch {
+    respondText(res, 400, 'bad request: the path is not valid percent-encoding');
+    return;
+  }
+
+  const candidate = resolve(join(root, normalize(decoded)));
   if (candidate !== root && !candidate.startsWith(root + sep)) {
     respondText(res, 403, 'forbidden');
     return;
