@@ -59,6 +59,20 @@ await check(
   }),
 );
 
+// Guard 3: a path that is not valid percent-encoding is refused, and -- the
+// point of the check -- the server is still alive afterwards. This used to
+// throw inside the request handler and kill the process, agent and all.
+const badPath = await fetch(`http://127.0.0.1:${PORT}/%`).then(
+  (res) => res.status,
+  () => 0,
+);
+check('a malformed percent-escape is refused, not fatal', badPath === 400, `http=${badPath}`);
+const stillServing = await fetch(`http://127.0.0.1:${PORT}/`).then(
+  (res) => res.status,
+  () => 0,
+);
+check('the server survived it', stillServing === 200, `http=${stillServing}`);
+
 const socket = new WebSocket(`ws://127.0.0.1:${PORT}/ws?token=${token}`);
 const entries = [];
 let state = null;

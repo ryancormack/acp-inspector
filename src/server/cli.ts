@@ -196,12 +196,22 @@ function main(): void {
 }
 
 function openBrowser(url: string): void {
-  const opener =
-    process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+  // `start` is a cmd builtin, not an executable, so Windows needs cmd itself.
+  const [opener, args] =
+    process.platform === 'darwin'
+      ? ['open', [url]]
+      : process.platform === 'win32'
+        ? ['cmd', ['/c', 'start', '', url]]
+        : ['xdg-open', [url]];
   try {
     // The URL carries the session token, so it is passed as a single argv entry
     // rather than through a shell.
-    spawn(opener, [url], { stdio: 'ignore', detached: true, shell: false }).unref();
+    const child = spawn(opener, args, { stdio: 'ignore', detached: true, shell: false });
+    // A missing opener is reported asynchronously as an 'error' event, and an
+    // unhandled one is fatal. Without this listener a headless host with no
+    // xdg-open loses the inspector a moment after it prints its URL.
+    child.on('error', () => undefined);
+    child.unref();
   } catch {
     // Opening a browser is a convenience; the URL is on stdout regardless.
   }
