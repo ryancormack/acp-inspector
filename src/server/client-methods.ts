@@ -32,8 +32,13 @@ export interface HandlerContext {
   capabilities: CapabilityToggles;
   /** Filesystem access is confined to these roots (the session cwd, normally). */
   allowedRoots: string[];
-  /** Per-session terminal manager backing the terminal/* methods. */
-  terminals: TerminalManager;
+  /**
+   * Per-session terminal manager backing the terminal/* methods. Present only
+   * once an agent has been launched (that is where it is created, scoped to the
+   * agent's cwd); a terminal/* call with no manager is answered as an error
+   * rather than serviced against a guessed root.
+   */
+  terminals?: TerminalManager;
 }
 
 /**
@@ -128,6 +133,15 @@ async function handleTerminal(
   params: unknown,
   ctx: HandlerContext,
 ): Promise<HandlerOutcome> {
+  if (!ctx.terminals) {
+    return {
+      kind: 'error',
+      error: RequestError.internalError(
+        undefined,
+        `${method} was called before an agent was launched`,
+      ).toErrorResponse(),
+    };
+  }
   try {
     switch (method) {
       case CLIENT_METHODS.terminal_create:

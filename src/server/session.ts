@@ -493,10 +493,10 @@ export class InspectorSession {
       outcome = await handleClientMethod(message.method, message.params, {
         capabilities: this.capabilities,
         allowedRoots: [this.agent?.spec.cwd ?? this.options.defaultCwd],
-        terminals: (this.terminals ??= new TerminalManager(
-          [this.agent?.spec.cwd ?? this.options.defaultCwd],
-          (message) => this.note(message),
-        )),
+        // Created in launch(), scoped to the agent's cwd. A terminal/* call
+        // with no agent launched is answered as an error by the handler rather
+        // than serviced against a guessed root.
+        terminals: this.terminals ?? undefined,
       });
     } catch (error) {
       outcome = {

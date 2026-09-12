@@ -138,6 +138,41 @@ test('applies a default cap when outputByteLimit is omitted', async () => {
   );
 });
 
+test('a failed spawn (ENOENT) resolves wait_for_exit instead of hanging', async () => {
+  const mgr = mk();
+  const { terminalId } = mgr.create({
+    sessionId: 's',
+    command: 'this-binary-does-not-exist-xyzzy',
+    args: [],
+  });
+  // Must settle (via 'close', since a failed spawn emits no 'exit') and not hang.
+  const status = await Promise.race([
+    mgr.waitForExit(terminalId).then(() => 'settled'),
+    new Promise((r) => setTimeout(() => r('HUNG'), 5000)),
+  ]);
+  assert.equal(status, 'settled', 'wait_for_exit must resolve for a missing binary');
+});
+
+test('multi-chunk streaming truncation lands on a UTF-8 boundary (overflow==0)', async () => {
+  const mgr = mk();
+  // Stream 東 (e6 9d b1) then A, B one byte per chunk with limit 3. Dropping
+  // whole leading chunks lands byteLength exactly on 3 with the surviving head
+  // starting on a continuation byte — the overflow==0 case. Must not yield U+FFFD.
+  const { terminalId } = mgr.create({
+    sessionId: 's',
+    command: 'sh',
+    args: [
+      '-c',
+      // print each byte of 東AB separately so they arrive as distinct chunks
+      'printf "\\346"; sleep 0.02; printf "\\235"; sleep 0.02; printf "\\261"; sleep 0.02; printf "A"; sleep 0.02; printf "B"',
+    ],
+    outputByteLimit: 3,
+  });
+  const out = await drain(mgr, terminalId);
+  assert.equal(out.truncated, true);
+  assert.ok(!out.output.includes('\uFFFD'), `no broken UTF-8, got ${JSON.stringify(out.output)}`);
+});
+
 test('unknown terminalId is a not-found error', () => {
   const mgr = mk();
   assert.throws(

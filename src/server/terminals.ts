@@ -139,15 +139,25 @@ export class TerminalManager {
       this.onNote?.(`terminal ${id} process error: ${String(error)}`);
     });
     proc.on('exit', (code, signal) => {
-      const status: TerminalExitStatus = {
-        exitCode: code,
-        signal: signal ?? null,
-      };
-      record.exitStatus = status;
-      for (const w of record.exitWaiters.splice(0)) w(status);
+      this.settleExit(record, { exitCode: code, signal: signal ?? null });
+    });
+    // A failed spawn (ENOENT for a missing binary) emits 'error' + 'close' but
+    // NOT 'exit', so relying on 'exit' alone leaves wait_for_exit hanging
+    // forever. 'close' always fires once the process is fully done; settleExit
+    // is idempotent, so a normal exit (which fired 'exit' first) is unaffected
+    // and this only rescues the no-'exit' failure path.
+    proc.on('close', (code, signal) => {
+      this.settleExit(record, { exitCode: code, signal: signal ?? null });
     });
 
     return { terminalId: id };
+  }
+
+  /** Records the exit status once and wakes any wait_for_exit waiters. */
+  private settleExit(record: TerminalRecord, status: TerminalExitStatus): void {
+    if (record.exitStatus) return;
+    record.exitStatus = status;
+    for (const w of record.exitWaiters.splice(0)) w(status);
   }
 
   output(terminalId: string | undefined): TerminalOutputResponse {
@@ -222,19 +232,35 @@ export class TerminalManager {
     }
     record.truncated = true;
 
-    // Trim the (single) leading chunk down to the remaining allowance, at a
-    // UTF-8 character boundary.
-    const overflow = record.byteLength - limit;
-    if (overflow > 0 && record.chunks.length > 0) {
+    // Trim the surviving output down to the limit and onto a UTF-8 boundary.
+    // First skip the overflow bytes from the head, then — UNCONDITIONALLY, and
+    // ACROSS chunk boundaries — advance past any leading UTF-8 continuation
+    // bytes (0b10xxxxxx). The continuation walk must run even when overflow is
+    // 0 (dropping whole chunks can land byteLength exactly on the limit with a
+    // continuation byte at the front) and must be able to cross into later
+    // chunks (a multibyte char can straddle the drop), because the spec
+    // requires truncation to land on a character boundary.
+    let toSkip = Math.max(0, record.byteLength - limit);
+    while (record.chunks.length > 0) {
       const head = record.chunks[0]!;
-      let cut = overflow;
+      let cut = 0;
       while (cut < head.length) {
-        const byte = head[cut];
-        if (byte === undefined || (byte & 0xc0) !== 0x80) break;
+        const byte = head[cut]!;
+        if (cut >= toSkip && (byte & 0xc0) !== 0x80) break; // a lead byte, past overflow
         cut++;
       }
-      record.chunks[0] = head.subarray(cut);
-      record.byteLength -= cut;
+      if (cut >= head.length) {
+        // Whole head consumed; drop it and keep skipping into the next chunk.
+        record.byteLength -= head.length;
+        toSkip = Math.max(0, toSkip - head.length);
+        record.chunks.shift();
+        continue;
+      }
+      if (cut > 0) {
+        record.chunks[0] = head.subarray(cut);
+        record.byteLength -= cut;
+      }
+      break;
     }
   }
 
