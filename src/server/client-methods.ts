@@ -2,15 +2,22 @@ import {
   CLIENT_METHODS,
   PROTOCOL_METHODS,
   RequestError,
+  type CreateTerminalRequest,
   type ErrorResponse,
+  type KillTerminalRequest,
   type ReadTextFileRequest,
   type ReadTextFileResponse,
+  type ReleaseTerminalRequest,
+  type TerminalOutputRequest,
+  type WaitForTerminalExitRequest,
+  type WaitForTerminalExitResponse,
   type WriteTextFileRequest,
   type WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
 import { readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { CapabilityToggles } from '../shared/wire.js';
+import { TerminalError, TerminalManager } from './terminals.js';
 
 export type HandlerOutcome =
   /** Answer the agent now. */
@@ -25,6 +32,13 @@ export interface HandlerContext {
   capabilities: CapabilityToggles;
   /** Filesystem access is confined to these roots (the session cwd, normally). */
   allowedRoots: string[];
+  /**
+   * Per-session terminal manager backing the terminal/* methods. Present only
+   * once an agent has been launched (that is where it is created, scoped to the
+   * agent's cwd); a terminal/* call with no manager is answered as an error
+   * rather than serviced against a guessed root.
+   */
+  terminals?: TerminalManager;
 }
 
 /**
@@ -102,14 +116,73 @@ export async function handleClientMethod(
     return writeTextFile(params as WriteTextFileRequest, ctx);
   }
   if (TERMINAL_METHODS.has(method)) {
-    return {
-      kind: 'error',
-      error: RequestError.internalError(undefined, `${method} is advertised but not yet implemented by the inspector`)
-        .toErrorResponse(),
-    };
+    return handleTerminal(method, params, ctx);
   }
 
   return { kind: 'error', error: RequestError.methodNotFound(method).toErrorResponse() };
+}
+
+/**
+ * Services the ACP terminal/* methods against the per-session
+ * {@link TerminalManager}. A {@link TerminalError} maps to the right JSON-RPC
+ * code — a bad param or unknown terminal id is the agent's fault
+ * (resourceNotFound / invalidParams), anything else is internal.
+ */
+async function handleTerminal(
+  method: string,
+  params: unknown,
+  ctx: HandlerContext,
+): Promise<HandlerOutcome> {
+  if (!ctx.terminals) {
+    return {
+      kind: 'error',
+      error: RequestError.internalError(
+        undefined,
+        `${method} was called before an agent was launched`,
+      ).toErrorResponse(),
+    };
+  }
+  try {
+    switch (method) {
+      case CLIENT_METHODS.terminal_create:
+        return { kind: 'result', result: ctx.terminals.create(params as CreateTerminalRequest) };
+      case CLIENT_METHODS.terminal_output:
+        return {
+          kind: 'result',
+          result: ctx.terminals.output((params as TerminalOutputRequest | undefined)?.terminalId),
+        };
+      case CLIENT_METHODS.terminal_wait_for_exit: {
+        const status = await ctx.terminals.waitForExit(
+          (params as WaitForTerminalExitRequest | undefined)?.terminalId,
+        );
+        const response: WaitForTerminalExitResponse = {
+          exitCode: status.exitCode ?? null,
+          signal: status.signal ?? null,
+        };
+        return { kind: 'result', result: response };
+      }
+      case CLIENT_METHODS.terminal_kill:
+        ctx.terminals.kill((params as KillTerminalRequest | undefined)?.terminalId);
+        return { kind: 'result', result: {} };
+      case CLIENT_METHODS.terminal_release:
+        ctx.terminals.release((params as ReleaseTerminalRequest | undefined)?.terminalId);
+        return { kind: 'result', result: {} };
+      default:
+        return { kind: 'error', error: RequestError.methodNotFound(method).toErrorResponse() };
+    }
+  } catch (error) {
+    if (error instanceof TerminalError) {
+      const rpc =
+        error.kind === 'not-found'
+          ? RequestError.resourceNotFound(error.message)
+          : RequestError.invalidParams(undefined, error.message);
+      return { kind: 'error', error: rpc.toErrorResponse() };
+    }
+    return {
+      kind: 'error',
+      error: RequestError.internalError(undefined, String(error)).toErrorResponse(),
+    };
+  }
 }
 
 async function readTextFile(

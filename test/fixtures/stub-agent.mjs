@@ -199,6 +199,32 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
         `stub-agent: terminal/create -> ${'error' in terminal ? terminal.error.code : 'ok'}\n`,
       );
 
+      // When the capability is advertised the inspector services the call, so
+      // drive the full lifecycle and report what came back — this proves the
+      // terminal was really run, not just accepted.
+      if ('result' in terminal && terminal.result?.terminalId) {
+        const terminalId = terminal.result.terminalId;
+        await call('terminal/wait_for_exit', { sessionId, terminalId });
+        const output = await call('terminal/output', { sessionId, terminalId });
+        const captured = output.result?.output ?? '';
+        const exitCode = output.result?.exitStatus?.exitCode;
+        await call('terminal/release', { sessionId, terminalId });
+        send({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: {
+                type: 'text',
+                text: `terminal-output:${JSON.stringify(captured)} exit:${exitCode}`,
+              },
+            },
+          },
+        });
+      }
+
       send({
         jsonrpc: '2.0',
         method: 'session/update',
