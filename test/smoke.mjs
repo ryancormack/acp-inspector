@@ -165,6 +165,36 @@ send({
 });
 await settle(400);
 
+/* ------------------------------------------------- terminal serviced */
+
+// Everything above ran with terminal:false, so terminal/create was rejected
+// (asserted below). Now advertise the capability and run another turn: the
+// inspector must actually service the full terminal lifecycle.
+const framesBeforeTerminal = entries.length;
+answeredPermission = false; // let the terminal turn's permission gate auto-answer
+send({
+  type: 'capabilities',
+  capabilities: {
+    fsRead: true,
+    fsWrite: true,
+    terminal: true,
+    elicitation: false,
+    authTerminal: false,
+  },
+});
+await settle(200);
+send({
+  type: 'send',
+  assignId: true,
+  message: {
+    jsonrpc: '2.0',
+    method: 'session/prompt',
+    params: { sessionId: state?.sessionId, prompt: [{ type: 'text', text: 'run a terminal' }] },
+  },
+});
+await settle(1500);
+const terminalFrames = entries.slice(framesBeforeTerminal);
+
 /* ------------------------------------------------- cancellation scenario */
 
 // Second turn, this time cancelled at the permission gate instead of answered.
@@ -227,6 +257,27 @@ const terminalReject = entries.find(
   (entry) => entry.dir === 'out' && entry.kind === 'error' && entry.raw.includes('did not advertise'),
 );
 check('terminal/create rejected because the capability was not advertised', terminalReject !== undefined);
+
+/* ------------------------------------------------- terminal serviced */
+
+const terminalCreated = terminalFrames.find(
+  (entry) => entry.dir === 'out' && entry.kind === 'response' && entry.raw.includes('terminalId'),
+);
+check('terminal/create was serviced when advertised -- got a terminalId', terminalCreated !== undefined);
+
+const waitAnswer = terminalFrames.find(
+  (entry) => entry.dir === 'in' && entry.method === 'terminal/wait_for_exit',
+);
+check('terminal/wait_for_exit was called by the agent', waitAnswer !== undefined);
+
+const terminalOutputChunk = terminalFrames.find(
+  (entry) => entry.dir === 'in' && entry.raw.includes('terminal-output:'),
+);
+check(
+  'terminal/output returned the real command output',
+  terminalOutputChunk?.raw.includes('hello') === true,
+  'expected the echo output to flow back through the inspector',
+);
 
 const permissionAnswer = entries.find(
   (entry) => entry.dir === 'out' && entry.raw.includes('allow-once'),

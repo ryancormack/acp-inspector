@@ -1,6 +1,7 @@
 import { PROTOCOL_VERSION, RequestError } from '@agentclientprotocol/sdk';
 import { AgentProcess, type AgentLaunchSpec } from './agent-process.js';
 import { handleClientMethod } from './client-methods.js';
+import { TerminalManager } from './terminals.js';
 import { validateParams } from './validate.js';
 import {
   DEFAULT_CAPABILITIES,
@@ -49,6 +50,7 @@ export class InspectorSession {
   private readonly pendingBroadcast: LogEntry[] = [];
 
   private agent: AgentProcess | null = null;
+  private terminals: TerminalManager | null = null;
   private seq = 0;
   private nextRequestId = 1;
   private dropped = 0;
@@ -187,6 +189,10 @@ export class InspectorSession {
     this.negotiated = null;
     this.sessionId = null;
     this.lastExit = undefined;
+    // Tear down any terminals from a prior agent and start a fresh manager
+    // scoped to the new agent's cwd.
+    this.terminals?.releaseAll();
+    this.terminals = new TerminalManager([spec.cwd]);
 
     const agent = new AgentProcess(spec, {
       onStdoutLine: (line) => this.onAgentLine(line),
@@ -195,6 +201,7 @@ export class InspectorSession {
         this.lastExit = { code, signal };
         this.note(`agent exited (code=${code ?? 'null'} signal=${signal ?? 'null'})`);
         this.failAllOutstanding('agent exited');
+        this.terminals?.releaseAll();
         this.pushState();
       },
       onSpawnError: (error) => {
@@ -486,6 +493,9 @@ export class InspectorSession {
       outcome = await handleClientMethod(message.method, message.params, {
         capabilities: this.capabilities,
         allowedRoots: [this.agent?.spec.cwd ?? this.options.defaultCwd],
+        terminals: (this.terminals ??= new TerminalManager([
+          this.agent?.spec.cwd ?? this.options.defaultCwd,
+        ])),
       });
     } catch (error) {
       outcome = {

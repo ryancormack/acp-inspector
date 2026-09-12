@@ -42,7 +42,7 @@
     "dev:ui": "vite",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.ui.json --noEmit",
     "start": "node dist/server/cli.js",
-    "test": "npm run build && node --test test/transcript.test.mjs && node test/smoke.mjs",
+    "test": "npm run build && node --test test/transcript.test.mjs test/terminals.test.mjs && node test/smoke.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
