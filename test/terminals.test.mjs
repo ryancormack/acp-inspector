@@ -121,6 +121,23 @@ test('rejects a cwd outside the session roots', () => {
   );
 });
 
+test('applies a default cap when outputByteLimit is omitted', async () => {
+  const mgr = mk();
+  // Emit ~2 MiB with no outputByteLimit; retained output must stay bounded by
+  // the 1 MiB default rather than growing to the full amount.
+  const { terminalId } = mgr.create({
+    sessionId: 's',
+    command: 'sh',
+    args: ['-c', 'yes AAAAAAAA | head -c 2097152'],
+  });
+  const out = await drain(mgr, terminalId);
+  assert.equal(out.truncated, true, 'truncation flagged once the default cap is exceeded');
+  assert.ok(
+    Buffer.byteLength(out.output, 'utf8') <= 1024 * 1024,
+    `retained ${Buffer.byteLength(out.output, 'utf8')} bytes, expected <= 1 MiB`,
+  );
+});
+
 test('unknown terminalId is a not-found error', () => {
   const mgr = mk();
   assert.throws(

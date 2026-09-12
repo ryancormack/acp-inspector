@@ -192,7 +192,7 @@ export class InspectorSession {
     // Tear down any terminals from a prior agent and start a fresh manager
     // scoped to the new agent's cwd.
     this.terminals?.releaseAll();
-    this.terminals = new TerminalManager([spec.cwd]);
+    this.terminals = new TerminalManager([spec.cwd], (message) => this.note(message));
 
     const agent = new AgentProcess(spec, {
       onStdoutLine: (line) => this.onAgentLine(line),
@@ -493,9 +493,10 @@ export class InspectorSession {
       outcome = await handleClientMethod(message.method, message.params, {
         capabilities: this.capabilities,
         allowedRoots: [this.agent?.spec.cwd ?? this.options.defaultCwd],
-        terminals: (this.terminals ??= new TerminalManager([
-          this.agent?.spec.cwd ?? this.options.defaultCwd,
-        ])),
+        terminals: (this.terminals ??= new TerminalManager(
+          [this.agent?.spec.cwd ?? this.options.defaultCwd],
+          (message) => this.note(message),
+        )),
       });
     } catch (error) {
       outcome = {

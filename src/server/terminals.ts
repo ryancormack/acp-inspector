@@ -9,6 +9,17 @@ import type {
 } from '@agentclientprotocol/sdk';
 
 /**
+ * Default retained-output cap when the agent omits `outputByteLimit`.
+ *
+ * The ACP field is optional, and without a ceiling a chatty or streaming
+ * subprocess (a verbose build, `tail -f`) held open until release would grow
+ * the retained buffer without bound. 1 MiB is generous for a debugger's
+ * "what did this command print" use while keeping memory predictable; an agent
+ * that wants more can pass a larger `outputByteLimit`.
+ */
+const DEFAULT_OUTPUT_BYTE_LIMIT = 1024 * 1024;
+
+/**
  * Distinguishes a caller error (bad params, unknown terminal id) from an
  * internal fault so the handler can map it to the right JSON-RPC error code.
  */
@@ -25,12 +36,19 @@ export class TerminalError extends Error {
 interface TerminalRecord {
   id: string;
   proc: ChildProcessByStdio<null, Readable, Readable>;
-  /** Combined stdout+stderr, byte-limited (see outputByteLimit). */
-  buffer: Buffer;
+  /**
+   * Combined stdout+stderr as a chunk list, byte-limited (see outputByteLimit).
+   * Kept as an array so appends are O(1); it is concatenated once, lazily, when
+   * output() is read — never on the hot data path.
+   */
+  chunks: Buffer[];
+  /** Running total of bytes currently retained in {@link chunks}. */
+  byteLength: number;
   truncated: boolean;
   /** null while running; set once the process exits. */
   exitStatus: TerminalExitStatus | null;
-  outputByteLimit: number | null;
+  /** Always a positive number — the request value, or the default cap. */
+  outputByteLimit: number;
   /** Resolvers waiting on wait_for_exit. */
   exitWaiters: Array<(status: TerminalExitStatus) => void>;
   released: boolean;
@@ -41,16 +59,29 @@ interface TerminalRecord {
  *
  * One instance lives per {@link InspectorSession} so terminals are torn down
  * when the agent exits or is relaunched. It mirrors how `fs/*` is serviced:
- * commands run with the real environment (no shell), cwd is confined to the
- * session roots, and output is captured verbatim. The inspector debugs an agent
- * by faithfully being the client the agent talks to, so a terminal must run the
- * agent's actual command — not a virtual/sandboxed reimplementation.
+ * commands run with the real environment (no shell), and the cwd is confined to
+ * the session roots. NOTE: only the cwd is confined — `command` and `args` are
+ * NOT restricted, so an advertised terminal capability grants the agent full
+ * command execution with the inspector's own privileges. The safety property
+ * rests entirely on the repo's "only run agents you trust" assumption. The
+ * inspector debugs an agent by faithfully being the client the agent talks to,
+ * so a terminal must run the agent's actual command — not a virtual/sandboxed
+ * reimplementation.
  */
 export class TerminalManager {
   private readonly terminals = new Map<string, TerminalRecord>();
   private counter = 0;
 
-  constructor(private readonly allowedRoots: string[]) {}
+  /**
+   * @param allowedRoots directories a terminal cwd may resolve into.
+   * @param onNote optional sink for lifecycle notes (e.g. a spawned process
+   *   error) so they surface in the inspector's frame log, not only in the
+   *   terminal's own output buffer.
+   */
+  constructor(
+    private readonly allowedRoots: string[],
+    private readonly onNote?: (message: string) => void,
+  ) {}
 
   create(params: CreateTerminalRequest | undefined): CreateTerminalResponse {
     if (!params || typeof params.command !== 'string' || params.command.length === 0) {
@@ -63,7 +94,7 @@ export class TerminalManager {
     const outputByteLimit =
       typeof params.outputByteLimit === 'number' && params.outputByteLimit > 0
         ? Math.floor(params.outputByteLimit)
-        : null;
+        : DEFAULT_OUTPUT_BYTE_LIMIT;
 
     const id = `term-${++this.counter}`;
 
@@ -79,7 +110,8 @@ export class TerminalManager {
     const record: TerminalRecord = {
       id,
       proc,
-      buffer: Buffer.alloc(0),
+      chunks: [],
+      byteLength: 0,
       truncated: false,
       exitStatus: null,
       outputByteLimit,
@@ -88,16 +120,23 @@ export class TerminalManager {
     };
     this.terminals.set(id, record);
 
+    // O(1) per chunk: push and enforce the cap by dropping whole leading chunks,
+    // rather than reallocating the full buffer on every write.
     const append = (chunk: Buffer) => {
-      record.buffer = Buffer.concat([record.buffer, chunk]);
+      record.chunks.push(chunk);
+      record.byteLength += chunk.length;
       this.enforceLimit(record);
     };
     proc.stdout.on('data', append);
     proc.stderr.on('data', append);
     proc.on('error', (error) => {
-      // A spawn/runtime failure surfaces as an exit with no code; record the
-      // message into the buffer so the agent can see why nothing ran.
+      // A spawn/runtime failure (e.g. ENOENT for a missing binary) surfaces
+      // here. Record it in the buffer so the agent can see why nothing ran, AND
+      // note it so it shows in the inspector's own frame log — create() has
+      // already returned a terminalId, so without this the failure would be
+      // invisible to an operator watching the log.
       append(Buffer.from(`\n[inspector] terminal process error: ${String(error)}\n`));
+      this.onNote?.(`terminal ${id} process error: ${String(error)}`);
     });
     proc.on('exit', (code, signal) => {
       const status: TerminalExitStatus = {
@@ -114,7 +153,7 @@ export class TerminalManager {
   output(terminalId: string | undefined): TerminalOutputResponse {
     const record = this.require(terminalId);
     return {
-      output: record.buffer.toString('utf8'),
+      output: Buffer.concat(record.chunks, record.byteLength).toString('utf8'),
       truncated: record.truncated,
       exitStatus: record.exitStatus ?? undefined,
     };
@@ -167,22 +206,36 @@ export class TerminalManager {
   }
 
   /**
-   * Keeps the buffer within outputByteLimit by dropping bytes FROM THE FRONT,
-   * per the ACP spec, and nudging the cut to the next UTF-8 lead byte so the
-   * retained string never starts mid-character.
+   * Keeps retained output within outputByteLimit by dropping bytes FROM THE
+   * FRONT, per the ACP spec, nudging the cut to the next UTF-8 lead byte so the
+   * retained string never starts mid-character. Operates on the chunk list:
+   * whole leading chunks are dropped first, then the new leading chunk is
+   * trimmed — so the hot path never rescans the whole buffer.
    */
   private enforceLimit(record: TerminalRecord): void {
     const limit = record.outputByteLimit;
-    if (limit === null || record.buffer.length <= limit) return;
-    let cut = record.buffer.length - limit;
-    // Advance past continuation bytes (0b10xxxxxx) to a character boundary.
-    while (cut < record.buffer.length) {
-      const byte = record.buffer[cut];
-      if (byte === undefined || (byte & 0xc0) !== 0x80) break;
-      cut++;
+    if (record.byteLength <= limit) return;
+
+    // Drop whole leading chunks while doing so still leaves us over the limit.
+    while (record.chunks.length > 1 && record.byteLength - record.chunks[0]!.length >= limit) {
+      record.byteLength -= record.chunks.shift()!.length;
     }
-    record.buffer = record.buffer.subarray(cut);
     record.truncated = true;
+
+    // Trim the (single) leading chunk down to the remaining allowance, at a
+    // UTF-8 character boundary.
+    const overflow = record.byteLength - limit;
+    if (overflow > 0 && record.chunks.length > 0) {
+      const head = record.chunks[0]!;
+      let cut = overflow;
+      while (cut < head.length) {
+        const byte = head[cut];
+        if (byte === undefined || (byte & 0xc0) !== 0x80) break;
+        cut++;
+      }
+      record.chunks[0] = head.subarray(cut);
+      record.byteLength -= cut;
+    }
   }
 
   private buildEnv(env: CreateTerminalRequest['env']): NodeJS.ProcessEnv {
@@ -196,10 +249,11 @@ export class TerminalManager {
   }
 
   /**
-   * The ACP terminal cwd must be absolute. We additionally confine it to the
-   * session roots (mirroring fs/* checkPath) so an agent under development
-   * cannot run a command against an arbitrary directory. Absent cwd defaults to
-   * the first session root.
+   * The ACP terminal cwd must be absolute. We additionally confine the cwd to
+   * the session roots (mirroring fs/* checkPath). This narrows only WHERE a
+   * command starts — it does NOT restrict which binary runs or what it touches
+   * (command/args are unconfined), so it is not a sandbox. Absent cwd defaults
+   * to the first session root.
    */
   private resolveCwd(cwd: string | undefined): string {
     if (cwd === undefined) return this.allowedRoots[0] ?? process.cwd();

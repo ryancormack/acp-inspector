@@ -97,7 +97,7 @@ ACP agents call methods on their client, so observing stdio alone is not enough 
 | `session/request_permission` | Held open until you choose one of the agent's options, cancel it, or return an error. |
 | `elicitation/create` | Held open for a manual response. |
 | `fs/read_text_file` / `fs/write_text_file` | Performed when advertised, within the session cwd. |
-| `terminal/*` | Performed when advertised: `create` spawns the command (no shell) with its cwd confined to the session roots, `output` returns the captured bytes (front-truncated to `outputByteLimit` at a character boundary) with exit status, and `wait_for_exit`/`kill`/`release` behave as specified. Terminals are torn down when the agent exits or is relaunched. |
+| `terminal/*` | Performed when advertised: `create` spawns the command (no shell) with only its cwd confined to the session roots, `output` returns the captured bytes (front-truncated to `outputByteLimit`, or a default cap, at a character boundary) with exit status, and `wait_for_exit`/`kill`/`release` behave as specified. Terminals are torn down when the agent exits or is relaunched. The command and arguments themselves are **not** restricted — see Security. |
 
 The capability checkboxes control what is advertised during `initialize`. If an agent calls a capability-dependent method that was not advertised, the debugger returns `-32601` instead of silently accepting the call.
 
@@ -139,6 +139,7 @@ ACP Debugger runs commands and may service filesystem requests on your machine. 
 - WebSocket handshakes validate the token, `Host`, and `Origin`
 - the agent command comes from the CLI by default, not from the browser
 - filesystem callbacks are confined to the session cwd
+- terminal callbacks confine only the working directory: when the `terminal` capability is advertised, the agent can run **any** command with the inspector's own privileges (only the cwd is checked). Treat enabling it as granting arbitrary command execution.
 
 Only run agents you trust, and review requested permissions before allowing tool calls.
 
