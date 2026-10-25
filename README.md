@@ -1,6 +1,6 @@
 # ACP Debugger
 
-A browser-based client and debugger for the [Agent Client Protocol](https://agentclientprotocol.com). It launches an ACP agent over stdio and gives you a live view of JSON-RPC traffic, streamed messages, tool calls, permission requests, stderr, and protocol errors.
+A browser-based client and debugger for the [Agent Client Protocol](https://agentclientprotocol.com). It launches an ACP agent over stdio — or connects to one over Streamable HTTP or WebSocket (experimental) — and gives you a live view of JSON-RPC traffic, streamed messages, tool calls, permission requests, stderr, and protocol errors.
 
 ![ACP Debugger showing a completed prompt turn](docs/images/overview.png)
 
@@ -75,6 +75,52 @@ npx @ryancormack/acp-debugger \
 
 The session cwd also confines ACP `fs/read_text_file` and `fs/write_text_file` callbacks. Requests cannot access paths outside it.
 
+## Connecting over HTTP or WebSocket (experimental)
+
+ACP's stdio transport is the default and is what agents support first. ACP also
+defines a **Streamable HTTP** transport (a draft proposal), and this build can
+drive an agent over HTTP or WebSocket instead of spawning one. Both are
+experimental: they ride the ACP SDK's own experimental transport clients and
+track a draft of the spec, so the wire contract may change.
+
+Connect to a running agent endpoint instead of passing a command:
+
+```bash
+# Streamable HTTP
+npx @ryancormack/acp-debugger --http https://agent.example.com/acp
+
+# WebSocket
+npx @ryancormack/acp-debugger --ws wss://agent.example.com/acp
+```
+
+`--http`/`--ws` are mutually exclusive with a `-- <command>`; pick one transport.
+Pass request headers (e.g. an auth token) with repeatable `--header`:
+
+```bash
+npx @ryancormack/acp-debugger \
+  --header "Authorization=Bearer <token>" \
+  --http https://agent.example.com/acp
+```
+
+Notes on network transports:
+
+- **Session management is unchanged.** The ACP `sessionId` is carried in the
+  message body exactly as over stdio; the transport's connection/session routing
+  (the `Acp-Connection-Id` / `Acp-Session-Id` headers and SSE streams) is handled
+  by the SDK transport, not something you configure.
+- **`--cwd` still applies.** Over a network transport the agent runs elsewhere,
+  but `--cwd` still fills `session/new` and bounds the inspector's own
+  `fs`/`terminal` servicing.
+- **`fs` and `terminal` default off** for a network agent. A remote agent's
+  `fs/*` or `terminal/*` calls would otherwise be serviced against the
+  **inspector's** local disk, not the agent's host. Re-enable them deliberately
+  with the capability toggles if that is what you want.
+- **No transparent reconnect.** In ACP v1 a dropped connection is not silently
+  resumed; the inspector surfaces the disconnect. Reconnecting means a fresh
+  `initialize` and `session/load` (the agent must advertise `loadSession`).
+- **No JSON-RPC batches over HTTP** — the Streamable HTTP transport does not
+  carry batch arrays (stdio does).
+
 ## Reading the timeline
 
 A real agent can emit hundreds of `session/update` notifications during one turn. The **updates** filter controls how they appear:
@@ -120,15 +166,18 @@ Vendor extension methods are retained and marked with an `ext` badge. They are s
 
 ```text
 --port <n>              Port to serve on (default 6274)
---cwd <path>            Working directory for the agent and the ACP session
---env KEY=VALUE         Extra environment variable for the agent (repeatable)
---allow-browser-spawn   Permit editing the agent command from the browser
+--cwd <path>            Working directory for the ACP session
+--env KEY=VALUE         Extra environment variable for a stdio agent (repeatable)
+--header NAME=VALUE     HTTP/WS request header, e.g. an auth token (repeatable)
+--http <url>            Connect over Streamable HTTP instead of spawning (experimental)
+--ws <url>              Connect over WebSocket instead of spawning (experimental)
+--allow-browser-spawn   Permit supplying/editing the agent target from the browser
 --no-open               Do not open a browser
 --dev                   Also accept websockets from the Vite dev server on 6275
 -h, --help              Show usage
 ```
 
-The browser cannot change the agent command unless you explicitly pass `--allow-browser-spawn`.
+The browser cannot change the agent target (command or URL) unless you explicitly pass `--allow-browser-spawn`.
 
 ## Security
 
