@@ -107,12 +107,17 @@ export interface PendingRequest {
 
 export interface AgentStatus {
   running: boolean;
+  /** How the agent is reached. `stdio` is a subprocess; the rest are network. */
+  transport: 'stdio' | 'http' | 'websocket';
   pid?: number;
+  /** stdio only: the command and its args. */
   command?: string;
   args?: string[];
+  /** Network transports only: the agent endpoint URL. */
+  url?: string;
   cwd?: string;
   exit?: { code: number | null; signal: string | null };
-  /** True when the launch command may be edited from the browser. */
+  /** True when the launch target may be edited/supplied from the browser. */
   spawnFromBrowserAllowed: boolean;
 }
 
@@ -158,10 +163,16 @@ export type ServerEvent =
 export type ClientCommand =
   | {
       type: 'launch';
+      /** Pick a transport. Omitted means "same as however the session was configured". */
+      transport?: 'stdio' | 'http' | 'websocket';
+      /** stdio overrides. */
       command?: string;
       args?: string[];
-      cwd?: string;
       env?: Record<string, string>;
+      /** Network-transport overrides. */
+      url?: string;
+      headers?: Record<string, string>;
+      cwd?: string;
     }
   | { type: 'kill' }
   /**

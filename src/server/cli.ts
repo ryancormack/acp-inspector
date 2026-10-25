@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
-import type { AgentLaunchSpec } from './agent-process.js';
+import type { AgentLaunchSpec } from './transport.js';
 import { startHttpServer } from './http.js';
 import { InspectorSession } from './session.js';
 import { checkValidatorTable } from './validate.js';
@@ -19,6 +19,9 @@ interface CliOptions {
   allowBrowserSpawn: boolean;
   dev: boolean;
   env: Record<string, string>;
+  headers: Record<string, string>;
+  /** A remote endpoint, when started with --http/--ws instead of a command. */
+  remote: { transport: 'http' | 'websocket'; url: string } | null;
   agent: { command: string; args: string[] } | null;
 }
 
@@ -27,14 +30,25 @@ acp-debugger - browser-based inspector for the Agent Client Protocol
 
 Usage:
   acp-debugger [options] -- <agent-command> [agent-args...]
+  acp-debugger [options] --http <url>
+  acp-debugger [options] --ws <url>
+
+Transports:
+  stdio (default)         Spawn the agent as a subprocess (command after --).
+  --http <url>            Connect to an agent over Streamable HTTP (experimental).
+  --ws <url>              Connect to an agent over WebSocket (experimental).
+                          --http/--ws are mutually exclusive with a -- command.
 
 Options:
   --port <n>              Port to serve the UI on (default ${DEFAULT_PORT})
-  --cwd <path>            Working directory for the agent and the ACP session
+  --cwd <path>            Working directory for the ACP session. For a network
+                          agent this fills session/new and bounds the inspector's
+                          own fs/terminal servicing; the agent runs elsewhere.
                           (default: the current directory)
-  --env KEY=VALUE         Extra environment variable for the agent (repeatable)
-  --allow-browser-spawn   Permit editing the agent command from the browser.
-                          Off by default: the command comes from this argv.
+  --env KEY=VALUE         Extra environment variable for a stdio agent (repeatable)
+  --header NAME=VALUE     HTTP/WS request header, e.g. an auth token (repeatable)
+  --allow-browser-spawn   Permit supplying/editing the agent target (command or
+                          URL) from the browser. Off by default.
   --no-open               Do not open a browser automatically
   --dev                   Also accept websocket connections from the Vite dev
                           server on port 6275
@@ -44,6 +58,8 @@ Examples:
   acp-debugger -- node dist/acp-agent.cjs
   acp-debugger --cwd ~/code/my-project -- uv run my-acp-agent
   acp-debugger --env AWS_PROFILE=dev -- node dist/acp-agent.cjs
+  acp-debugger --http https://agent.example.com/acp
+  acp-debugger --header "Authorization=Bearer t0ken" --ws wss://agent.example.com/acp
 `.trimStart();
 
 function parseArgs(argv: string[]): CliOptions {
@@ -54,6 +70,8 @@ function parseArgs(argv: string[]): CliOptions {
     allowBrowserSpawn: false,
     dev: false,
     env: {},
+    headers: {},
+    remote: null,
     agent: null,
   };
 
@@ -87,6 +105,20 @@ function parseArgs(argv: string[]): CliOptions {
         options.env[pair.slice(0, eq)] = pair.slice(eq + 1);
         break;
       }
+      case '--header': {
+        const pair = requireValue(flags[++i], '--header');
+        const eq = pair.indexOf('=');
+        if (eq <= 0) fail(`--header expects NAME=VALUE, got ${pair}`);
+        options.headers[pair.slice(0, eq).trim()] = pair.slice(eq + 1);
+        break;
+      }
+      case '--http':
+      case '--ws': {
+        const url = requireValue(flags[++i], flag);
+        if (options.remote) fail('only one of --http / --ws may be given');
+        options.remote = { transport: flag === '--http' ? 'http' : 'websocket', url };
+        break;
+      }
       case '--allow-browser-spawn':
         options.allowBrowserSpawn = true;
         break;
@@ -103,6 +135,10 @@ function parseArgs(argv: string[]): CliOptions {
 
   const [command, ...args] = agentArgv;
   if (command !== undefined) options.agent = { command, args };
+
+  if (options.remote && options.agent) {
+    fail('--http/--ws cannot be combined with a `-- <command>`; pick one transport');
+  }
 
   return options;
 }
@@ -131,14 +167,22 @@ function main(): void {
   }
   const token = randomBytes(24).toString('hex');
 
-  const launchSpec: AgentLaunchSpec | null = options.agent
+  const launchSpec: AgentLaunchSpec | null = options.remote
     ? {
-        command: options.agent.command,
-        args: options.agent.args,
+        kind: options.remote.transport,
+        url: options.remote.url,
+        headers: options.headers,
         cwd: options.cwd,
-        env: options.env,
       }
-    : null;
+    : options.agent
+      ? {
+          kind: 'stdio',
+          command: options.agent.command,
+          args: options.agent.args,
+          cwd: options.cwd,
+          env: options.env,
+        }
+      : null;
 
   const session = new InspectorSession({
     launchSpec,
@@ -170,15 +214,21 @@ function main(): void {
   server.on('listening', () => {
     const url = `http://${HOST}:${options.port}/?token=${token}`;
     process.stdout.write(`\nACP debugger listening on ${url}\n`);
-    if (launchSpec) {
+    if (launchSpec?.kind === 'stdio') {
       process.stdout.write(
         `Agent: ${launchSpec.command} ${launchSpec.args.join(' ')}\n` +
           `cwd:   ${launchSpec.cwd}\n`,
       );
+    } else if (launchSpec) {
+      const label = launchSpec.kind === 'http' ? 'HTTP' : 'WebSocket';
+      process.stdout.write(
+        `Agent: ${launchSpec.url} (${label}, experimental)\n` + `cwd:   ${launchSpec.cwd}\n`,
+      );
     } else {
       process.stdout.write(
-        'No agent command given. Pass one after `--`, e.g.\n' +
-          '  acp-debugger -- node dist/acp-agent.cjs\n',
+        'No agent target given. Pass a command after `--`, or a URL with --http/--ws, e.g.\n' +
+          '  acp-debugger -- node dist/acp-agent.cjs\n' +
+          '  acp-debugger --http https://agent.example.com/acp\n',
       );
     }
     process.stdout.write('\nPress Ctrl-C to stop.\n\n');

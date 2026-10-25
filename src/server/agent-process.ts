@@ -1,41 +1,34 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { LineSplitter } from './ndjson.js';
-
-export interface AgentLaunchSpec {
-  command: string;
-  args: string[];
-  cwd: string;
-  env: Record<string, string>;
-}
-
-export interface AgentProcessHandlers {
-  /** A line the agent wrote to stdout, verbatim. */
-  onStdoutLine: (line: string) => void;
-  /** A line the agent wrote to stderr, verbatim. */
-  onStderrLine: (line: string) => void;
-  onExit: (code: number | null, signal: NodeJS.Signals | null) => void;
-  onSpawnError: (error: Error) => void;
-}
+import type {
+  AgentTransport,
+  AgentTransportHandlers,
+  StdioLaunchSpec,
+} from './transport.js';
 
 /**
- * Owns the agent subprocess and its three pipes.
+ * Owns the agent subprocess and its three pipes — the original ACP transport.
  *
  * Deliberately thin: it does not parse, validate, or interpret anything. The
  * inspector needs the bytes as they were, so parsing happens a layer up and
  * never replaces the captured line.
+ *
+ * stdout lines become inbound ACP messages; stderr lines are transport logging;
+ * the process exiting or failing to spawn are the exit/error signals. This is
+ * the stdio implementation of {@link AgentTransport}.
  */
-export class AgentProcess {
+export class StdioTransport implements AgentTransport {
   private child: ChildProcess | null = null;
   private readonly stdout: LineSplitter;
   private readonly stderr: LineSplitter;
   private exited = false;
 
   constructor(
-    readonly spec: AgentLaunchSpec,
-    private readonly handlers: AgentProcessHandlers,
+    readonly spec: StdioLaunchSpec,
+    private readonly handlers: AgentTransportHandlers,
   ) {
-    this.stdout = new LineSplitter(handlers.onStdoutLine);
-    this.stderr = new LineSplitter(handlers.onStderrLine);
+    this.stdout = new LineSplitter(handlers.onInboundLine);
+    this.stderr = new LineSplitter(handlers.onTransportLog);
   }
 
   start(): void {
@@ -56,7 +49,7 @@ export class AgentProcess {
 
     child.on('error', (error) => {
       this.exited = true;
-      this.handlers.onSpawnError(error);
+      this.handlers.onError(error);
     });
 
     child.on('exit', (code, signal) => {
