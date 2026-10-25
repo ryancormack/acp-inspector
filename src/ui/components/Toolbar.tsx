@@ -18,7 +18,19 @@ const CAPABILITY_LABELS: Array<{ key: keyof CapabilityToggles; label: string; hi
 
 export function Toolbar({ state, connection, send, onConnectSequence }: ToolbarProps) {
   const { agent, capabilities, negotiated } = state;
-  const commandLine = [agent.command ?? '(no command)', ...(agent.args ?? [])].join(' ');
+  const isNetwork = agent.transport === 'http' || agent.transport === 'websocket';
+  // What the agent is reached by: a command for stdio, a URL for a network
+  // transport. A network transport has no pid and does not "spawn".
+  const target = isNetwork
+    ? (agent.url ?? '(no url)')
+    : [agent.command ?? '(no command)', ...(agent.args ?? [])].join(' ');
+  const runningLabel = isNetwork
+    ? agent.running
+      ? `connected · ${agent.transport}`
+      : 'disconnected'
+    : agent.running
+      ? `agent pid ${agent.pid ?? '?'}`
+      : 'agent stopped';
 
   const toggle = (key: keyof CapabilityToggles): void => {
     send({ type: 'capabilities', capabilities: { ...capabilities, [key]: !capabilities[key] } });
@@ -29,19 +41,19 @@ export function Toolbar({ state, connection, send, onConnectSequence }: ToolbarP
       <div className="toolbar-row">
         <span className={`pill pill-${connection}`}>{connection}</span>
         <span className={`pill ${agent.running ? 'pill-running' : 'pill-stopped'}`}>
-          {agent.running ? `agent pid ${agent.pid ?? '?'}` : 'agent stopped'}
+          {runningLabel}
         </span>
         <code className="command" title={agent.cwd ?? ''}>
-          {commandLine}
+          {target}
         </code>
 
         {agent.running ? (
           <button type="button" onClick={() => send({ type: 'kill' })}>
-            Kill
+            {isNetwork ? 'Disconnect' : 'Kill'}
           </button>
         ) : (
           <button type="button" className="primary" onClick={() => send({ type: 'launch' })}>
-            Launch
+            {isNetwork ? 'Connect' : 'Launch'}
           </button>
         )}
         <button type="button" onClick={onConnectSequence} disabled={!agent.running}>
@@ -122,7 +134,9 @@ export function Toolbar({ state, connection, send, onConnectSequence }: ToolbarP
           </span>
         )}
         {!agent.spawnFromBrowserAllowed && (
-          <span className="muted">command locked to argv (--allow-browser-spawn to unlock)</span>
+          <span className="muted">
+            {isNetwork ? 'endpoint' : 'command'} locked to argv (--allow-browser-spawn to unlock)
+          </span>
         )}
         {agent.exit && (
           <span className="warn">

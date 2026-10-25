@@ -1,5 +1,7 @@
 import { PROTOCOL_VERSION, RequestError } from '@agentclientprotocol/sdk';
-import { AgentProcess, type AgentLaunchSpec } from './agent-process.js';
+import { StdioTransport } from './agent-process.js';
+import { HttpTransport, WebSocketTransport } from './stream-transport.js';
+import type { AgentLaunchSpec, AgentTransport } from './transport.js';
 import { handleClientMethod } from './client-methods.js';
 import { TerminalManager } from './terminals.js';
 import { validateParams } from './validate.js';
@@ -38,6 +40,17 @@ interface OutstandingOutbound {
   sentAt: number;
 }
 
+/** Browser-supplied launch overrides. Mirrors the `launch` control command. */
+export interface LaunchOverride {
+  transport?: 'stdio' | 'http' | 'websocket';
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  cwd?: string;
+}
+
 /**
  * One inspector session: at most one agent subprocess, plus the log of
  * everything that crossed the wire while it was alive.
@@ -49,7 +62,7 @@ export class InspectorSession {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly pendingBroadcast: LogEntry[] = [];
 
-  private agent: AgentProcess | null = null;
+  private agent: AgentTransport | null = null;
   private terminals: TerminalManager | null = null;
   private seq = 0;
   private nextRequestId = 1;
@@ -91,9 +104,11 @@ export class InspectorSession {
     return {
       agent: {
         running: this.agent?.running ?? false,
+        transport: spec?.kind ?? 'stdio',
         pid: this.agent?.pid,
-        command: spec?.command,
-        args: spec?.args,
+        command: spec?.kind === 'stdio' ? spec.command : undefined,
+        args: spec?.kind === 'stdio' ? spec.args : undefined,
+        url: spec?.kind === 'http' || spec?.kind === 'websocket' ? spec.url : undefined,
         cwd: spec?.cwd ?? this.options.defaultCwd,
         exit: this.lastExit,
         spawnFromBrowserAllowed: this.options.allowBrowserSpawn,
@@ -154,31 +169,11 @@ export class InspectorSession {
 
   /* ------------------------------------------------------------------- lifecycle */
 
-  launch(override?: Partial<AgentLaunchSpec>): void {
+  launch(override?: LaunchOverride): void {
     if (this.agent?.running) throw new Error('an agent is already running');
 
-    const base = this.options.launchSpec;
-    if (override && !this.options.allowBrowserSpawn) {
-      const changesCommand =
-        (override.command !== undefined && override.command !== base?.command) ||
-        (override.args !== undefined &&
-          JSON.stringify(override.args) !== JSON.stringify(base?.args));
-      if (changesCommand) {
-        throw new Error(
-          'editing the launch command from the browser is disabled; restart with --allow-browser-spawn',
-        );
-      }
-    }
-
-    const spec: AgentLaunchSpec = {
-      command: override?.command ?? base?.command ?? '',
-      args: override?.args ?? base?.args ?? [],
-      cwd: override?.cwd ?? base?.cwd ?? this.options.defaultCwd,
-      env: { ...(base?.env ?? {}), ...(override?.env ?? {}) },
-    };
-    if (!spec.command) {
-      throw new Error('no agent command configured; pass one after `--` on the command line');
-    }
+    const spec = this.resolveLaunchSpec(override);
+    this.applyTransportCapabilityDefaults(spec);
 
     this.outstandingOutbound.clear();
     this.pending.clear();
@@ -194,26 +189,137 @@ export class InspectorSession {
     this.terminals?.releaseAll();
     this.terminals = new TerminalManager([spec.cwd], (message) => this.note(message));
 
-    const agent = new AgentProcess(spec, {
-      onStdoutLine: (line) => this.onAgentLine(line),
-      onStderrLine: (line) => this.record({ dir: 'stderr', kind: 'stderr', raw: line }),
-      onExit: (code, signal) => {
+    const handlers = {
+      onInboundLine: (line: string) => this.onAgentLine(line),
+      onTransportLog: (line: string) =>
+        this.record({ dir: 'stderr', kind: 'stderr', raw: line }),
+      onExit: (code: number | null, signal: NodeJS.Signals | null) => {
         this.lastExit = { code, signal };
-        this.note(`agent exited (code=${code ?? 'null'} signal=${signal ?? 'null'})`);
-        this.failAllOutstanding('agent exited');
+        this.note(
+          spec.kind === 'stdio'
+            ? `agent exited (code=${code ?? 'null'} signal=${signal ?? 'null'})`
+            : 'agent disconnected',
+        );
+        this.failAllOutstanding(spec.kind === 'stdio' ? 'agent exited' : 'transport disconnected');
         this.terminals?.releaseAll();
         this.pushState();
       },
-      onSpawnError: (error) => {
-        this.note(`failed to spawn agent: ${error.message}`);
+      onError: (error: Error) => {
+        this.note(
+          spec.kind === 'stdio'
+            ? `failed to spawn agent: ${error.message}`
+            : `transport error: ${error.message}`,
+        );
         this.pushState();
       },
-    });
+    };
 
-    this.agent = agent;
-    agent.start();
-    this.note(`spawned ${spec.command} ${spec.args.join(' ')} (cwd=${spec.cwd})`);
+    this.agent =
+      spec.kind === 'stdio'
+        ? new StdioTransport(spec, handlers)
+        : spec.kind === 'http'
+          ? new HttpTransport(spec, handlers)
+          : new WebSocketTransport(spec, handlers);
+
+    this.agent.start();
+    this.note(launchNote(spec));
     this.pushState();
+  }
+
+  /**
+   * Merges the base spec (from argv) with a browser override into a concrete
+   * launch spec, enforcing the browser-spawn guard.
+   *
+   * The guard is the same trust decision for every transport: supplying or
+   * changing the agent target from the browser — a command to spawn OR a URL to
+   * connect to — is off unless `--allow-browser-spawn` was passed.
+   */
+  private resolveLaunchSpec(override?: LaunchOverride): AgentLaunchSpec {
+    const base = this.options.launchSpec;
+    const cwd = override?.cwd ?? base?.cwd ?? this.options.defaultCwd;
+    const kind = override?.transport ?? base?.kind ?? 'stdio';
+
+    if (kind === 'http' || kind === 'websocket') {
+      const baseUrl = base?.kind === kind ? base.url : undefined;
+      const baseHeaders = base?.kind === kind ? base.headers : {};
+      const url = override?.url ?? baseUrl;
+      const headers = { ...baseHeaders, ...(override?.headers ?? {}) };
+
+      if (override && !this.options.allowBrowserSpawn) {
+        const changesTarget =
+          (override.url !== undefined && override.url !== baseUrl) ||
+          (override.transport !== undefined && override.transport !== base?.kind);
+        if (changesTarget) {
+          throw new Error(
+            'supplying the agent endpoint from the browser is disabled; restart with --allow-browser-spawn',
+          );
+        }
+      }
+      if (!url) {
+        throw new Error(`no agent URL configured; pass one with --${kind}=<url>`);
+      }
+      return kind === 'http'
+        ? { kind: 'http', url, headers, cwd }
+        : { kind: 'websocket', url, headers, cwd };
+    }
+
+    const baseCommand = base?.kind === 'stdio' ? base.command : undefined;
+    const baseArgs = base?.kind === 'stdio' ? base.args : undefined;
+    const baseEnv = base?.kind === 'stdio' ? base.env : {};
+
+    if (override && !this.options.allowBrowserSpawn) {
+      const changesCommand =
+        (override.command !== undefined && override.command !== baseCommand) ||
+        (override.args !== undefined &&
+          JSON.stringify(override.args) !== JSON.stringify(baseArgs));
+      if (changesCommand) {
+        throw new Error(
+          'editing the launch command from the browser is disabled; restart with --allow-browser-spawn',
+        );
+      }
+    }
+
+    const command = override?.command ?? baseCommand ?? '';
+    if (!command) {
+      throw new Error('no agent command configured; pass one after `--` on the command line');
+    }
+    return {
+      kind: 'stdio',
+      command,
+      args: override?.args ?? baseArgs ?? [],
+      cwd,
+      env: { ...(baseEnv ?? {}), ...(override?.env ?? {}) },
+    };
+  }
+
+  /**
+   * Network agents default fs/terminal OFF.
+   *
+   * TODO(transport): revisit once remote fs/terminal servicing is designed.
+   * A remote HTTP/WS agent that calls `fs/read_text_file` or `terminal/create`
+   * would be serviced against the INSPECTOR's local disk, not the agent's host
+   * — almost always wrong and surprising. Until that is thought through, these
+   * are forced off when a network transport launches, unless the operator opted
+   * in from the browser (--allow-browser-spawn) and set them explicitly. The
+   * toggle still works; this only changes the default on launch. See the
+   * feat/http-ws-transport PR.
+   */
+  private applyTransportCapabilityDefaults(spec: AgentLaunchSpec): void {
+    if (spec.kind === 'stdio') return;
+    if (!this.capabilities.fsRead && !this.capabilities.fsWrite && !this.capabilities.terminal) {
+      return;
+    }
+    this.capabilities = {
+      ...this.capabilities,
+      fsRead: false,
+      fsWrite: false,
+      terminal: false,
+    };
+    this.note(
+      `fs/terminal capabilities forced off for a ${spec.kind} agent: these would be serviced ` +
+        `against the inspector's local disk, not the remote agent's host. Re-enable them ` +
+        `deliberately with the capability toggles if that is what you want.`,
+    );
   }
 
   kill(): void {
@@ -601,6 +707,18 @@ function sessionScopeProblems(record: Record<string, unknown>): string[] {
 
 function idKey(id: JsonRpcId): string {
   return typeof id === 'number' ? `n:${id}` : `s:${String(id)}`;
+}
+
+/** A human-readable line describing what just launched. */
+function launchNote(spec: AgentLaunchSpec): string {
+  switch (spec.kind) {
+    case 'stdio':
+      return `spawned ${spec.command} ${spec.args.join(' ')} (cwd=${spec.cwd})`;
+    case 'http':
+      return `connecting to ${spec.url} over Streamable HTTP (cwd=${spec.cwd})`;
+    case 'websocket':
+      return `connecting to ${spec.url} over WebSocket (cwd=${spec.cwd})`;
+  }
 }
 
 /**

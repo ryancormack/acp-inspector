@@ -123,8 +123,11 @@ function applyCommand(command: ClientCommand, session: InspectorSession): void {
   switch (command.type) {
     case 'launch':
       session.launch({
+        ...(command.transport !== undefined ? { transport: command.transport } : {}),
         ...(command.command !== undefined ? { command: command.command } : {}),
         ...(command.args !== undefined ? { args: command.args } : {}),
+        ...(command.url !== undefined ? { url: command.url } : {}),
+        ...(command.headers !== undefined ? { headers: command.headers } : {}),
         ...(command.cwd !== undefined ? { cwd: command.cwd } : {}),
         ...(command.env !== undefined ? { env: command.env } : {}),
       });
