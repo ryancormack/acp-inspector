@@ -1,6 +1,6 @@
-import { AGENT_METHODS, CLIENT_METHODS, PROTOCOL_METHODS } from '@agentclientprotocol/sdk';
+import { AGENT_METHODS, CLIENT_METHODS, PROTOCOL_METHODS } from '@agentclientprotocol/sdk/unstable';
 import { Ajv2020, type ValidateFunction } from 'ajv/dist/2020.js';
-import acpSchema from '@agentclientprotocol/sdk/schema/schema.json' with { type: 'json' };
+import acpSchema from '@agentclientprotocol/sdk/schema/v1/schema.unstable.json' with { type: 'json' };
 
 /**
  * Validates a frame's `params` against the ACP schema that ships inside
@@ -18,7 +18,8 @@ import acpSchema from '@agentclientprotocol/sdk/schema/schema.json' with { type:
  * Hence the table below. Every entry is checked against the schema at startup,
  * so a rename upstream surfaces as a loud warning rather than as validation that
  * quietly stops happening, and any method without an entry is reported to the UI
- * as unchecked rather than as valid.
+ * as unchecked rather than as valid. NES and `document/*` methods ship no JSON
+ * schema, so they are unchecked.
  */
 
 const ajv = new Ajv2020({
@@ -50,16 +51,11 @@ const PARAMS_DEF: Record<string, string> = {
   [AGENT_METHODS.session_cancel]: 'CancelNotification',
   [AGENT_METHODS.session_set_mode]: 'SetSessionModeRequest',
   [AGENT_METHODS.session_set_config_option]: 'SetSessionConfigOptionRequest',
-  [AGENT_METHODS.nes_start]: 'StartNesRequest',
-  [AGENT_METHODS.nes_suggest]: 'SuggestNesRequest',
-  [AGENT_METHODS.nes_accept]: 'AcceptNesNotification',
-  [AGENT_METHODS.nes_reject]: 'RejectNesNotification',
-  [AGENT_METHODS.nes_close]: 'CloseNesRequest',
-  [AGENT_METHODS.document_did_open]: 'DidOpenDocumentNotification',
-  [AGENT_METHODS.document_did_change]: 'DidChangeDocumentNotification',
-  [AGENT_METHODS.document_did_close]: 'DidCloseDocumentNotification',
-  [AGENT_METHODS.document_did_save]: 'DidSaveDocumentNotification',
-  [AGENT_METHODS.document_did_focus]: 'DidFocusDocumentNotification',
+  [AGENT_METHODS.session_archive]: 'ArchiveSessionRequest',
+  [AGENT_METHODS.session_unarchive]: 'UnarchiveSessionRequest',
+  [AGENT_METHODS.session_status]: 'SessionStatusRequest',
+  [AGENT_METHODS.session_set_title]: 'SetSessionTitleRequest',
+  [AGENT_METHODS.auth_status]: 'AuthStatusRequest',
 
   // agent -> client
   [CLIENT_METHODS.session_update]: 'SessionNotification',
@@ -71,10 +67,9 @@ const PARAMS_DEF: Record<string, string> = {
   [CLIENT_METHODS.terminal_kill]: 'KillTerminalRequest',
   [CLIENT_METHODS.terminal_release]: 'ReleaseTerminalRequest',
   [CLIENT_METHODS.terminal_wait_for_exit]: 'WaitForTerminalExitRequest',
-  [CLIENT_METHODS.mcp_connect]: 'ConnectMcpRequest',
-  [CLIENT_METHODS.mcp_disconnect]: 'DisconnectMcpRequest',
   [CLIENT_METHODS.elicitation_create]: 'CreateElicitationRequest',
   [CLIENT_METHODS.elicitation_complete]: 'CompleteElicitationNotification',
+  [CLIENT_METHODS.auth_status_update]: 'AuthStatusUpdateNotification',
 
   // both directions
   [PROTOCOL_METHODS.cancel_request]: 'CancelRequestNotification',
