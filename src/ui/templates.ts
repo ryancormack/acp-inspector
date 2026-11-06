@@ -1,4 +1,5 @@
-import { AGENT_METHODS, PROTOCOL_METHODS, PROTOCOL_VERSION } from '@agentclientprotocol/sdk';
+// The NES entrypoint's registry is the widest: stable, unstable, NES and document methods.
+import { AGENT_METHODS, PROTOCOL_METHODS, PROTOCOL_VERSION } from '@agentclientprotocol/sdk/experimental/nes';
 import type { CapabilityToggles } from '../shared/wire';
 
 export { PROTOCOL_VERSION };
@@ -29,6 +30,8 @@ export function clientCapabilities(toggles: CapabilityToggles): Record<string, u
 /** Methods that carry no id and get no response. */
 const NOTIFICATIONS = new Set<string>([
   AGENT_METHODS.session_cancel,
+  AGENT_METHODS.nes_accept,
+  AGENT_METHODS.nes_reject,
   AGENT_METHODS.document_did_open,
   AGENT_METHODS.document_did_change,
   AGENT_METHODS.document_did_close,
@@ -43,7 +46,7 @@ type ParamsFactory = (ctx: TemplateContext) => unknown;
  * Starting params for the methods a debugging session actually types.
  *
  * Every method in the SDK's registry is selectable; the ones without an entry
- * here just start from `{}`. Curating the common flow rather than all 29 keeps
+ * here just start from `{}`. Curating the common flow rather than every method keeps
  * the dropdown honest without pretending to know the shape of, say,
  * `nes/suggest`.
  */
